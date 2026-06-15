@@ -1,6 +1,8 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type TripSegment = {
   id: string;
@@ -57,6 +59,7 @@ function formatTime(iso: string): string {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const [date, setDate] = useState("2026-06-14");
   const [data, setData] = useState<ReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,14 +90,28 @@ export default function HomePage() {
     void load();
   }, [load]);
 
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  }
+
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: "1.5rem", maxWidth: 1200, margin: "0 auto" }}>
-      <h1>Fleet Analytics — локальний перегляд</h1>
-      <p style={{ color: "#555" }}>
-        Дані з Supabase (<code>daily_trips</code> + <code>trip_segments</code>)
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Fleet Analytics — локальний перегляд</h1>
+          <p style={{ color: "#555", marginBottom: 0 }}>
+            Дані з Supabase (<code>daily_trips</code> + <code>trip_segments</code>)
+          </p>
+        </div>
+        <button type="button" onClick={() => void handleSignOut()}>
+          Вийти
+        </button>
+      </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20, marginTop: 20 }}>
         <label>
           Дата:{" "}
           <input

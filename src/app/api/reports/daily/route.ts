@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth/require-user";
 import { listDailyTripsForReportDate } from "@/db/trips-repository";
 import { getPreviousBusinessDay } from "@/utils/time";
 import { getServerEnv } from "@/config/env";
@@ -8,6 +9,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
+    const user = await requireUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const env = getServerEnv();
     const date =
       request.nextUrl.searchParams.get("date") ??

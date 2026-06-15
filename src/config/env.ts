@@ -67,3 +67,47 @@ export function requireCronSecret(): string {
 export function getWialonOperateAs(env = getServerEnv()): string | undefined {
   return env.WIALON_OPERATE_AS;
 }
+
+const publicEnvSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+});
+
+export type PublicEnv = z.infer<typeof publicEnvSchema>;
+
+let cachedPublicEnv: PublicEnv | null = null;
+
+function pickFirstEnv(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value != null && value.trim().length > 0);
+}
+
+function resolvePublicEnvInput() {
+  return {
+    NEXT_PUBLIC_SUPABASE_URL: pickFirstEnv(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_URL,
+    ),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: pickFirstEnv(
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      process.env.SUPABASE_PUBLISHABLE_KEY,
+      process.env.SUPABASE_ANON_KEY,
+    ),
+  };
+}
+
+export function getPublicEnv(): PublicEnv {
+  if (cachedPublicEnv) {
+    return cachedPublicEnv;
+  }
+
+  const parsed = publicEnvSchema.safeParse(resolvePublicEnvInput());
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid public environment configuration: ${issues}`);
+  }
+
+  cachedPublicEnv = parsed.data;
+  return cachedPublicEnv;
+}
