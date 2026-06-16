@@ -5,7 +5,115 @@ import {
   parseCoordinateAddressCell,
   parseTimeCoordinateCell,
 } from "./common";
-import type { WialonTableRow } from "../types";
+import type { WialonStatRow, WialonTableRow } from "../types";
+
+const TRIPS_STAT_LABELS = {
+  movementDuration: "Время в движении",
+  stopCount: "Количество остановок",
+  parkingDuration: "Продолжительность стоянок",
+  parkingCountFromTrips: "Количество стоянок",
+  mileageKm: "Пробег в поездках",
+  averageSpeedKmh: "Средняя скорость в поездках",
+  maxSpeedKmh: "Макс. скорость в поездках",
+  fuelConsumedL: "Потрачено по ДУТ в поездках",
+  averageFuelConsumptionLPer100Km: "Ср. расход по ДУТ в поездках",
+} as const;
+
+const TRIPS_DURATION_LABELS = new Set<string>([
+  TRIPS_STAT_LABELS.movementDuration,
+  TRIPS_STAT_LABELS.parkingDuration,
+]);
+
+export type ParsedTripsDailyStats = {
+  movementDurationSeconds: number | null;
+  stopCount: number;
+  parkingDurationSeconds: number | null;
+  parkingCountFromTrips: number;
+  mileageKm: number | null;
+  averageSpeedKmh: number | null;
+  maxSpeedKmh: number | null;
+  fuelConsumedL: number | null;
+  averageFuelConsumptionLPer100Km: number | null;
+  rawReportStats: Array<{ label: string; raw: string; unit: string | null }>;
+  warnings: string[];
+};
+
+function pickCount(values: Record<string, number | null>, label: string): number {
+  const value = values[label];
+  return value == null ? 0 : Math.round(value);
+}
+
+function parseTripsStatValues(stats: WialonStatRow[]): {
+  values: Record<string, number | null>;
+  raw: Array<{ label: string; raw: string; unit: string | null }>;
+  warnings: string[];
+} {
+  const values: Record<string, number | null> = {};
+  const raw: Array<{ label: string; raw: string; unit: string | null }> = [];
+  const warnings: string[] = [];
+
+  for (const row of stats) {
+    const label = row.n?.trim();
+    if (!label) {
+      continue;
+    }
+    const cell = row.c?.[0] ?? null;
+    const rawText = cellToString(cell);
+
+    if (TRIPS_DURATION_LABELS.has(label)) {
+      const seconds = parseDurationToSeconds(rawText);
+      raw.push({ label, raw: rawText, unit: "s" });
+      values[label] = seconds;
+      if (seconds == null && rawText) {
+        warnings.push(`Unable to parse duration stat label "${label}"`);
+      }
+      continue;
+    }
+
+    const parsed = parseValueWithUnit(cell);
+    raw.push({ label, raw: parsed.raw, unit: parsed.unit });
+    values[label] = parsed.value;
+    if (parsed.value == null && parsed.raw) {
+      warnings.push(`Unable to parse stat label "${label}"`);
+    }
+  }
+
+  return { values, raw, warnings };
+}
+
+export function parseTripsDailyStats(stats: WialonStatRow[]): ParsedTripsDailyStats {
+  const { values, raw, warnings } = parseTripsStatValues(stats);
+
+  return {
+    movementDurationSeconds: values[TRIPS_STAT_LABELS.movementDuration] ?? null,
+    stopCount: pickCount(values, TRIPS_STAT_LABELS.stopCount),
+    parkingDurationSeconds: values[TRIPS_STAT_LABELS.parkingDuration] ?? null,
+    parkingCountFromTrips: pickCount(values, TRIPS_STAT_LABELS.parkingCountFromTrips),
+    mileageKm: values[TRIPS_STAT_LABELS.mileageKm] ?? null,
+    averageSpeedKmh: values[TRIPS_STAT_LABELS.averageSpeedKmh] ?? null,
+    maxSpeedKmh: values[TRIPS_STAT_LABELS.maxSpeedKmh] ?? null,
+    fuelConsumedL: values[TRIPS_STAT_LABELS.fuelConsumedL] ?? null,
+    averageFuelConsumptionLPer100Km:
+      values[TRIPS_STAT_LABELS.averageFuelConsumptionLPer100Km] ?? null,
+    rawReportStats: raw,
+    warnings,
+  };
+}
+
+export type TripsReportParseResult = {
+  daily: ParsedTripsDailyStats;
+  segments: ParsedTripSegment[];
+};
+
+export function parseTripsReportFull(input: {
+  stats: WialonStatRow[];
+  rows: WialonTableRow[];
+}): TripsReportParseResult {
+  return {
+    daily: parseTripsDailyStats(input.stats),
+    segments: parseTripsReport(input.rows),
+  };
+}
 
 export type ParsedTripSegment = {
   sourceRowNumber: number;

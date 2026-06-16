@@ -37,6 +37,13 @@ export type DailyTripUpsert = {
   deviation_percent: number | null;
   anomaly_status: string;
   is_anomaly: boolean;
+  movement_duration_seconds: number | null;
+  stop_count: number;
+  parking_duration_seconds: number | null;
+  parking_count_from_trips: number;
+  rolling_1000km_distance_km: number | null;
+  rolling_1000km_fuel_l: number | null;
+  rolling_1000km_consumption_l_per_100km: number | null;
   raw_report_stats: unknown;
 };
 
@@ -117,6 +124,46 @@ export async function getBaselineHistory(
   }));
 }
 
+export type RecentTripSegmentRow = {
+  ended_at: string;
+  mileage_km: number;
+  fuel_consumed_l: number | null;
+};
+
+export async function getRecentTripSegmentsForVehicle(input: {
+  vehicleId: string;
+  beforeEndedAt: string;
+  limit?: number;
+}): Promise<RecentTripSegmentRow[]> {
+  const limit = input.limit ?? 200;
+  const { data, error } = await getSupabaseAdmin()
+    .from("trip_segments")
+    .select(
+      `
+      ended_at,
+      mileage_km,
+      fuel_consumed_l,
+      daily_trips!inner (
+        vehicle_id
+      )
+    `,
+    )
+    .eq("daily_trips.vehicle_id", input.vehicleId)
+    .lt("ended_at", input.beforeEndedAt)
+    .order("ended_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(`Failed to load recent trip segments: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => ({
+    ended_at: row.ended_at as string,
+    mileage_km: Number(row.mileage_km),
+    fuel_consumed_l: (row.fuel_consumed_l as number | null) ?? null,
+  }));
+}
+
 export async function listDailyTripsForReportDate(reportDate: string): Promise<
   Array<{
     id: string;
@@ -130,6 +177,17 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
     deviation_percent: number | null;
     start_address: string | null;
     end_address: string | null;
+    movement_duration_seconds: number | null;
+    stop_count: number;
+    parking_duration_seconds: number | null;
+    parking_count_from_trips: number;
+    max_speed_kmh: number | null;
+    average_speed_kmh: number | null;
+    starting_fuel_l: number | null;
+    ending_fuel_l: number | null;
+    rolling_1000km_distance_km: number | null;
+    rolling_1000km_fuel_l: number | null;
+    rolling_1000km_consumption_l_per_100km: number | null;
     vehicle: {
       display_name: string;
       tractor_number: string;
@@ -139,8 +197,11 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
       id: string;
       started_at: string;
       ended_at: string;
+      duration_seconds: number | null;
       mileage_km: number;
       fuel_consumed_l: number | null;
+      average_speed_kmh: number | null;
+      max_speed_kmh: number | null;
       start_city: string | null;
       end_city: string | null;
       start_address: string | null;
@@ -164,6 +225,17 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
       deviation_percent,
       start_address,
       end_address,
+      movement_duration_seconds,
+      stop_count,
+      parking_duration_seconds,
+      parking_count_from_trips,
+      max_speed_kmh,
+      average_speed_kmh,
+      starting_fuel_l,
+      ending_fuel_l,
+      rolling_1000km_distance_km,
+      rolling_1000km_fuel_l,
+      rolling_1000km_consumption_l_per_100km,
       vehicles!inner (
         display_name,
         tractor_number,
@@ -173,8 +245,11 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
         id,
         started_at,
         ended_at,
+        duration_seconds,
         mileage_km,
         fuel_consumed_l,
+        average_speed_kmh,
+        max_speed_kmh,
         start_city,
         end_city,
         start_address,
@@ -211,8 +286,11 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
         id: segment.id as string,
         started_at: segment.started_at as string,
         ended_at: segment.ended_at as string,
+        duration_seconds: (segment.duration_seconds as number | null) ?? null,
         mileage_km: Number(segment.mileage_km),
         fuel_consumed_l: (segment.fuel_consumed_l as number | null) ?? null,
+        average_speed_kmh: (segment.average_speed_kmh as number | null) ?? null,
+        max_speed_kmh: (segment.max_speed_kmh as number | null) ?? null,
         start_city: (segment.start_city as string | null) ?? null,
         end_city: (segment.end_city as string | null) ?? null,
         start_address: (segment.start_address as string | null) ?? null,
@@ -234,6 +312,21 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
       deviation_percent: (row.deviation_percent as number | null) ?? null,
       start_address: (row.start_address as string | null) ?? null,
       end_address: (row.end_address as string | null) ?? null,
+      movement_duration_seconds:
+        (row.movement_duration_seconds as number | null) ?? null,
+      stop_count: Number(row.stop_count ?? 0),
+      parking_duration_seconds:
+        (row.parking_duration_seconds as number | null) ?? null,
+      parking_count_from_trips: Number(row.parking_count_from_trips ?? 0),
+      max_speed_kmh: (row.max_speed_kmh as number | null) ?? null,
+      average_speed_kmh: (row.average_speed_kmh as number | null) ?? null,
+      starting_fuel_l: (row.starting_fuel_l as number | null) ?? null,
+      ending_fuel_l: (row.ending_fuel_l as number | null) ?? null,
+      rolling_1000km_distance_km:
+        (row.rolling_1000km_distance_km as number | null) ?? null,
+      rolling_1000km_fuel_l: (row.rolling_1000km_fuel_l as number | null) ?? null,
+      rolling_1000km_consumption_l_per_100km:
+        (row.rolling_1000km_consumption_l_per_100km as number | null) ?? null,
       vehicle,
       segments,
     };

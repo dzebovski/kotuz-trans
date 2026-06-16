@@ -39,3 +39,39 @@ export function getPreviousBusinessDay(
   const local = reference.setZone(timezone);
   return formatReportDate(local.minus({ days: 1 }));
 }
+
+export function enumerateReportDates(from: string, to: string): string[] {
+  const start = DateTime.fromISO(from, { zone: "utc" });
+  const end = DateTime.fromISO(to, { zone: "utc" });
+  if (!start.isValid) {
+    throw new Error(`Invalid report date: ${from}`);
+  }
+  if (!end.isValid) {
+    throw new Error(`Invalid report date: ${to}`);
+  }
+  if (start > end) {
+    throw new Error(`Invalid date range: ${from} is after ${to}`);
+  }
+
+  const dates: string[] = [];
+  let cursor = start;
+  while (cursor <= end) {
+    dates.push(formatReportDate(cursor));
+    cursor = cursor.plus({ days: 1 });
+  }
+  return dates;
+}
+
+export function getRollingReportDateRange(
+  days: number,
+  timezone: string,
+  reference = DateTime.now(),
+): { from: string; to: string } {
+  if (days < 1) {
+    throw new Error(`Invalid days: ${days}`);
+  }
+  const to = getPreviousBusinessDay(timezone, reference);
+  const toDate = DateTime.fromISO(to, { zone: timezone });
+  const from = formatReportDate(toDate.minus({ days: days - 1 }));
+  return { from, to };
+}

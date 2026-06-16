@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { calculateDynamicBaseline } from "@/analytics/baseline";
 import { evaluateFuelAnomaly } from "@/analytics/anomaly";
+import { calculateRolling1000KmConsumption } from "@/analytics/rolling-fuel";
 import { normalizeCountryCode } from "@/analytics/country-normalizer";
 import { classifyRoute } from "@/analytics/route-classifier";
 import { sanitizeTripSegmentsForGpsSpoofing } from "@/analytics/gps-spoofing";
@@ -8,6 +9,7 @@ import { getVehicleDayTripWindow } from "@/analytics/vehicle-day-window";
 import { getServerEnv } from "@/config/env";
 import {
   getBaselineHistory,
+  getRecentTripSegmentsForVehicle,
   upsertDailyTripWithSegments,
   type DailyTripUpsert,
   type FuelEventUpsert,
@@ -23,7 +25,7 @@ import {
   parseFuelReport,
   shouldLoadFuelChronology,
 } from "@/wialon/parsers/fuel-report";
-import { parseTripsReport } from "@/wialon/parsers/trips-report";
+import { parseTripsDailyStats, parseTripsReport } from "@/wialon/parsers/trips-report";
 import { runWialonReport } from "@/wialon/report-runner";
 import { WialonError } from "@/wialon/errors";
 
@@ -135,6 +137,8 @@ export async function processVehicle(input: {
     );
 
     const parsedTrips = parseTripsReport(tripsResult.rows);
+    const tripsDailyStats = parseTripsDailyStats(tripsResult.stats);
+    warnings.push(...tripsDailyStats.warnings);
     const { segments: tripSegments, warnings: spoofWarnings } =
       sanitizeTripSegmentsForGpsSpoofing(parsedTrips);
     warnings.push(...spoofWarnings);
@@ -201,50 +205,6 @@ export async function processVehicle(input: {
     const fuelEventsParsed = parseFuelEvents(fuelParsed.chronologyRows);
     warnings.push(...fuelEventsParsed.warnings);
 
-    const dailyTrip: DailyTripUpsert = {
-      vehicle_id: input.vehicle.id,
-      ingestion_run_id: input.ingestionRunId,
-      report_date: input.interval.reportDate,
-      interval_start: input.interval.intervalStart.toISOString(),
-      interval_end: input.interval.intervalEnd.toISOString(),
-      mileage_km: mileageKm,
-      urban_mileage_km: urbanMileageKm,
-      highway_mileage_km: highwayMileageKm,
-      highway_ratio: highwayRatio,
-      max_speed_kmh: fuelParsed.daily.maxSpeedKmh,
-      average_speed_kmh: fuelParsed.daily.averageSpeedKmh,
-      parking_count: fuelParsed.daily.parkingCount,
-      starting_fuel_l: fuelParsed.daily.startingFuelL,
-      ending_fuel_l: fuelParsed.daily.endingFuelL,
-      fuel_consumed_l: fuelParsed.daily.fuelConsumedL,
-      average_fuel_consumption_l_per_100km:
-        fuelParsed.daily.averageFuelConsumptionLPer100Km,
-      refill_count: fuelParsed.daily.refillCount,
-      refilled_l: fuelParsed.daily.refilledL,
-      drain_count: fuelParsed.daily.drainCount,
-      drained_l: fuelParsed.daily.drainedL,
-      route_tag: route.routeTag,
-      route_key: route.routeKey,
-      start_country_code: route.startCountryCode,
-      start_city: route.startCity,
-      start_address: route.startAddress,
-      end_country_code: route.endCountryCode,
-      end_city: route.endCity,
-      end_address: route.endAddress,
-      baseline_scope: anomaly.baselineScope,
-      baseline_sample_size: anomaly.baselineSampleSize,
-      baseline_average_l_per_100km: anomaly.baselineAverageLPer100Km,
-      baseline_stddev_l_per_100km: anomaly.baselineStddevLPer100Km,
-      deviation_percent: anomaly.deviationPercent,
-      anomaly_status: anomaly.anomalyStatus,
-      is_anomaly: anomaly.isAnomaly,
-      raw_report_stats: {
-        fuel: fuelParsed.daily.rawReportStats,
-        warnings,
-        countriesVisited: route.countriesVisited,
-      },
-    };
-
     const segments: TripSegmentUpsert[] = route.segments.map((segment) => ({
       source_table_index: 0,
       source_row_number: segment.sourceRowNumber,
@@ -283,6 +243,79 @@ export async function processVehicle(input: {
       ending_fuel_l: segment.endingFuelL,
       raw_row: segment.rawRow,
     }));
+
+    const todaySegmentsNewestFirst = [...segments]
+      .sort((a, b) => b.ended_at.localeCompare(a.ended_at))
+      .map((segment) => ({
+        mileage_km: segment.mileage_km,
+        fuel_consumed_l: segment.fuel_consumed_l,
+      }));
+
+    const historicalSegments = await getRecentTripSegmentsForVehicle({
+      vehicleId: input.vehicle.id,
+      beforeEndedAt: input.interval.intervalStart.toISOString(),
+    });
+
+    const rolling = calculateRolling1000KmConsumption([
+      ...todaySegmentsNewestFirst,
+      ...historicalSegments.map((segment) => ({
+        mileage_km: segment.mileage_km,
+        fuel_consumed_l: segment.fuel_consumed_l,
+      })),
+    ]);
+
+    // TODO: precise time/distance above 86 km/h requires a separate Wialon report or raw GPS messages.
+    const dailyTrip: DailyTripUpsert = {
+      vehicle_id: input.vehicle.id,
+      ingestion_run_id: input.ingestionRunId,
+      report_date: input.interval.reportDate,
+      interval_start: input.interval.intervalStart.toISOString(),
+      interval_end: input.interval.intervalEnd.toISOString(),
+      mileage_km: mileageKm,
+      urban_mileage_km: urbanMileageKm,
+      highway_mileage_km: highwayMileageKm,
+      highway_ratio: highwayRatio,
+      max_speed_kmh: fuelParsed.daily.maxSpeedKmh,
+      average_speed_kmh: fuelParsed.daily.averageSpeedKmh,
+      parking_count: fuelParsed.daily.parkingCount,
+      starting_fuel_l: fuelParsed.daily.startingFuelL,
+      ending_fuel_l: fuelParsed.daily.endingFuelL,
+      fuel_consumed_l: fuelParsed.daily.fuelConsumedL,
+      average_fuel_consumption_l_per_100km:
+        fuelParsed.daily.averageFuelConsumptionLPer100Km,
+      refill_count: fuelParsed.daily.refillCount,
+      refilled_l: fuelParsed.daily.refilledL,
+      drain_count: fuelParsed.daily.drainCount,
+      drained_l: fuelParsed.daily.drainedL,
+      route_tag: route.routeTag,
+      route_key: route.routeKey,
+      start_country_code: route.startCountryCode,
+      start_city: route.startCity,
+      start_address: route.startAddress,
+      end_country_code: route.endCountryCode,
+      end_city: route.endCity,
+      end_address: route.endAddress,
+      baseline_scope: anomaly.baselineScope,
+      baseline_sample_size: anomaly.baselineSampleSize,
+      baseline_average_l_per_100km: anomaly.baselineAverageLPer100Km,
+      baseline_stddev_l_per_100km: anomaly.baselineStddevLPer100Km,
+      deviation_percent: anomaly.deviationPercent,
+      anomaly_status: anomaly.anomalyStatus,
+      is_anomaly: anomaly.isAnomaly,
+      movement_duration_seconds: tripsDailyStats.movementDurationSeconds,
+      stop_count: tripsDailyStats.stopCount,
+      parking_duration_seconds: tripsDailyStats.parkingDurationSeconds,
+      parking_count_from_trips: tripsDailyStats.parkingCountFromTrips,
+      rolling_1000km_distance_km: rolling?.distanceKm ?? null,
+      rolling_1000km_fuel_l: rolling?.fuelL ?? null,
+      rolling_1000km_consumption_l_per_100km: rolling?.consumptionLPer100Km ?? null,
+      raw_report_stats: {
+        fuel: fuelParsed.daily.rawReportStats,
+        trips: tripsDailyStats.rawReportStats,
+        warnings,
+        countriesVisited: route.countriesVisited,
+      },
+    };
 
     const fuelEvents: FuelEventUpsert[] = fuelEventsParsed.events.map(
       (event) => ({

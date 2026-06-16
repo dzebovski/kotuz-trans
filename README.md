@@ -75,7 +75,10 @@ npm run integrations:test
 npm run ingest:date -- --date=2026-06-14
 npm run ingest:date -- --date=2026-06-14 --send-telegram
 npm run ingest:date -- --date=2026-06-14 --force
+npm run ingest:range
 ```
+
+Backfill за багато днів: див. [04-backfill-ingest-guide.md](04-backfill-ingest-guide.md).
 
 `integrations:test` checks Supabase connectivity and Wialon login without printing secrets.
 

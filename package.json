@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "integrations:test": "tsx scripts/test-integrations.ts",
     "wialon:probe": "tsx scripts/wialon-probe.ts",
-    "ingest:date": "tsx scripts/run-daily.ts"
+    "ingest:date": "tsx scripts/run-daily.ts",
+    "ingest:range": "tsx scripts/ingest-range.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

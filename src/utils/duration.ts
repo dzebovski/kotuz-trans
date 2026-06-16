@@ -4,6 +4,17 @@ export function parseDurationToSeconds(input: string): number | null {
     return null;
   }
 
+  const daysTimeMatch = trimmed.match(
+    /^(\d+)\s*days?\s+(\d{1,2}):(\d{2}):(\d{2})$/i,
+  );
+  if (daysTimeMatch) {
+    const days = Number.parseInt(daysTimeMatch[1], 10);
+    const hours = Number.parseInt(daysTimeMatch[2], 10);
+    const minutes = Number.parseInt(daysTimeMatch[3], 10);
+    const seconds = Number.parseInt(daysTimeMatch[4], 10);
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+  }
+
   const colonParts = trimmed.split(":").map((part) => Number.parseInt(part, 10));
   if (colonParts.every((part) => Number.isFinite(part))) {
     if (colonParts.length === 3) {
