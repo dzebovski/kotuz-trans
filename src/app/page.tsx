@@ -2,6 +2,25 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  AlertTriangle,
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Database,
+  Fuel,
+  Gauge,
+  LayoutDashboard,
+  ListTree,
+  LogOut,
+  Moon,
+  RefreshCw,
+  Route,
+  Search,
+  Sun,
+  Truck,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 type TripSegment = {
@@ -67,16 +86,27 @@ type ReportResponse = {
   trips: DailyTrip[];
 };
 
+type ThemeMode = "light" | "dark";
+
+const THEME_STORAGE_KEY = "fleet-dashboard-theme";
+
+const navItems = [
+  { label: "Dashboard", href: "#overview", icon: LayoutDashboard },
+  { label: "Vehicles", href: "#vehicles", icon: Truck },
+  { label: "Trips", href: "#trips", icon: Route },
+  { label: "Alerts", href: "#alerts", icon: AlertTriangle },
+];
+
 function formatNum(value: number | null, suffix = ""): string {
   if (value == null || Number.isNaN(value)) {
-    return "—";
+    return "-";
   }
   return `${value.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}${suffix}`;
 }
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || seconds <= 0) {
-    return "—";
+    return "-";
   }
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -93,6 +123,69 @@ function formatTime(iso: string): string {
   });
 }
 
+function isAnomaly(status: string): boolean {
+  return status === "warning" || status === "critical";
+}
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "light" || value === "dark";
+}
+
+function countryCodeToFlag(code: string): string {
+  const normalized = code.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    return "";
+  }
+  return Array.from(normalized)
+    .map((char) => String.fromCodePoint(char.charCodeAt(0) + 127397))
+    .join("");
+}
+
+function routeFlags(routeKey: string | null): string {
+  if (!routeKey) {
+    return "-";
+  }
+  const codes = Array.from(routeKey.matchAll(/\b[A-Z]{2}(?=:)/g), (match) => match[0]);
+  const routeCodes =
+    codes.length === 1 ? [codes[0], codes[0]] : [codes[0], codes[codes.length - 1]];
+  const flags = routeCodes.map(countryCodeToFlag).filter(Boolean);
+  return flags.length > 0 ? flags.join(" → ") : "-";
+}
+
+function describeNonJsonResponse(status: number, body: string): string {
+  const snippet = body
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+
+  return snippet
+    ? `API повернув HTML замість JSON (${status}): ${snippet}`
+    : `API повернув HTML замість JSON (${status})`;
+}
+
+async function readReportResponse(response: Response): Promise<ReportResponse> {
+  const text = await response.text();
+  let json: (ReportResponse & { error?: string }) | null = null;
+
+  try {
+    json = JSON.parse(text) as ReportResponse & { error?: string };
+  } catch {
+    if (!response.ok) {
+      throw new Error(describeNonJsonResponse(response.status, text));
+    }
+    throw new Error("API повернув невалідний JSON");
+  }
+
+  if (!response.ok) {
+    throw new Error(json.error ?? `Failed to load report (${response.status})`);
+  }
+
+  return json;
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [date, setDate] = useState("2026-06-14");
@@ -100,16 +193,15 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [vehicleQuery, setVehicleQuery] = useState("");
+  const [theme, setTheme] = useState<ThemeMode>("dark");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/reports/daily?date=${date}`);
-      const json = (await response.json()) as ReportResponse & { error?: string };
-      if (!response.ok) {
-        throw new Error(json.error ?? "Failed to load report");
-      }
+      const json = await readReportResponse(response);
       setData(json);
     } catch (loadError) {
       setData(null);
@@ -125,6 +217,25 @@ export default function HomePage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const preferredTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+    const nextTheme = isThemeMode(storedTheme) ? storedTheme : preferredTheme;
+
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+  }, []);
+
+  function handleThemeToggle() {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  }
+
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -132,213 +243,393 @@ export default function HomePage() {
     router.refresh();
   }
 
+  const reportDate = data?.summary.reportDate ?? date;
+  const normalizedVehicleQuery = vehicleQuery.trim().toLowerCase();
+  const shouldFilterVehicles = normalizedVehicleQuery.length >= 2;
+  const filteredTrips =
+    data?.trips.filter((trip) =>
+      trip.vehicle.display_name.toLowerCase().includes(normalizedVehicleQuery),
+    ) ?? [];
+  const visibleTrips = shouldFilterVehicles ? filteredTrips : (data?.trips ?? []);
+  const tableHint = shouldFilterVehicles
+    ? `Знайдено ${visibleTrips.length} з ${data?.trips.length ?? 0}`
+    : `${data?.trips.length ?? 0} рядків`;
+
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "1.5rem", maxWidth: 1400, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-        <div>
-          <h1 style={{ margin: 0 }}>Fleet Analytics — подобовий звіт</h1>
-          <p style={{ color: "#555", marginBottom: 0 }}>
-            Дані з Supabase по машинах (<code>daily_trips</code> + <code>trip_segments</code>)
-          </p>
+    <div className="app-shell">
+      <aside className="sidebar" aria-label="Навігація">
+        <div className="brand-mark" title="Fleet Analytics">
+          <Database size={18} />
         </div>
-        <button type="button" onClick={() => void handleSignOut()}>
-          Вийти
-        </button>
-      </div>
+        <nav className="side-nav">
+          {navItems.map((item, index) => {
+            const Icon = item.icon;
+            return (
+              <a
+                key={item.label}
+                className={`side-nav__item${index === 0 ? " side-nav__item--active" : ""}`}
+                href={item.href}
+                title={item.label}
+              >
+                <Icon size={18} />
+              </a>
+            );
+          })}
+        </nav>
+      </aside>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20, marginTop: 20 }}>
-        <label>
-          Дата:{" "}
-          <input
-            type="date"
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-            style={{ padding: "6px 8px" }}
-          />
-        </label>
-        <button type="button" onClick={() => void load()} disabled={loading}>
-          {loading ? "Завантаження…" : "Оновити"}
-        </button>
-      </div>
+      <main className="page">
+        <header className="topbar">
+          <div className="topbar__title">
+            <div className="brand-mark">
+              <Truck size={18} />
+            </div>
+            <div>
+              <h1>Fleet Analytics</h1>
+              <p className="mono">daily_trips / trip_segments</p>
+            </div>
+          </div>
 
-      {error ? <p style={{ color: "#b00020" }}>{error}</p> : null}
+          <div className="topbar__actions">
+            <button
+              className="button button--ghost theme-toggle"
+              type="button"
+              onClick={handleThemeToggle}
+              aria-label={
+                theme === "dark" ? "Перемкнути на світлу тему" : "Перемкнути на темну тему"
+              }
+            >
+              {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
+              {theme === "dark" ? "Темна" : "Світла"}
+            </button>
+            <button
+              className="button"
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              <RefreshCw size={16} />
+              {loading ? "Оновлення" : "Оновити"}
+            </button>
+            <button className="button button--ghost" type="button" onClick={() => void handleSignOut()}>
+              <LogOut size={16} />
+              Вийти
+            </button>
+          </div>
+        </header>
 
-      {data ? (
-        <>
-          <section
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            <Stat label="Авто" value={String(data.summary.vehicleCount)} />
-            <Stat label="Пробіг" value={`${formatNum(data.summary.totalMileageKm)} km`} />
-            <Stat label="Паливо" value={`${formatNum(data.summary.totalFuelL)} l`} />
-            <Stat
-              label="Рух"
-              value={formatDuration(data.summary.totalMovementSeconds)}
-            />
-            <Stat
-              label="Стоянки"
-              value={`${data.summary.totalParkingCount} · ${formatDuration(data.summary.totalParkingSeconds)}`}
-            />
-            <Stat
-              label=">86 км/г"
-              value={String(data.summary.vehiclesOverSpeedLimit)}
-            />
-            <Stat
-              label="Rolling л/100"
-              value={formatNum(data.summary.averageRollingConsumptionLPer100Km, " l/100")}
-            />
-            <Stat label="З маршрутом" value={String(data.summary.withRoute)} />
+        <div className="content">
+          <section id="overview" className="hero-strip">
+            <div>
+              <p className="eyebrow">Operations console</p>
+              <h2>Подобовий звіт по машинах</h2>
+              <p>
+                Щільний перегляд флоту за дату{" "}
+                <span className="mono">{reportDate}</span>: паливо, рух,
+                стоянки, rolling 1000 км і контроль швидкості.
+              </p>
+            </div>
+            <div className="chip-row" id="alerts">
+              <Badge tone={data?.summary.vehiclesOverSpeedLimit ? "danger" : "success"}>
+                <Gauge size={13} />
+                {data?.summary.vehiclesOverSpeedLimit ?? 0} авто &gt;86
+              </Badge>
+              <Badge tone={data?.summary.withSegments ? "success" : "warning"}>
+                <ListTree size={13} />
+                {data?.summary.withSegments ?? 0} з рейсами
+              </Badge>
+            </div>
           </section>
 
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ textAlign: "left", borderBottom: "2px solid #ddd" }}>
-                  <th style={{ padding: 8 }}>Авто</th>
-                  <th style={{ padding: 8 }}>Маршрут</th>
-                  <th style={{ padding: 8 }}>Пробіг</th>
-                  <th style={{ padding: 8 }}>Паливо</th>
-                  <th style={{ padding: 8 }}>Розхід</th>
-                  <th style={{ padding: 8 }}>Рух</th>
-                  <th style={{ padding: 8 }}>Стоянки</th>
-                  <th style={{ padding: 8 }}>Vсер/макс</th>
-                  <th style={{ padding: 8 }}>Rolling</th>
-                  <th style={{ padding: 8 }}>ДУТ</th>
-                  <th style={{ padding: 8 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {data.trips.map((trip) => (
-                  <Fragment key={trip.id}>
-                    <tr style={{ borderBottom: "1px solid #eee" }}>
-                      <td style={{ padding: 8 }}>
-                        {trip.speedLimitExceeded ? "⚠ " : ""}
-                        {trip.vehicle.display_name}
+          {error ? <div className="error-banner">{error}</div> : null}
+
+          <section className="panel toolbar search-toolbar">
+            <div className="filter-row">
+              <label className="date-field">
+                <CalendarDays size={15} />
+                <input
+                  className="input mono"
+                  type="date"
+                  value={date}
+                  onChange={(event) => setDate(event.target.value)}
+                />
+              </label>
+            </div>
+            <label className="search-field">
+              <Search size={15} />
+              <input
+                className="input"
+                type="search"
+                placeholder="Пошук по номеру машини..."
+                value={vehicleQuery}
+                onChange={(event) => setVehicleQuery(event.target.value)}
+              />
+            </label>
+            <p className="muted search-hint">
+              {vehicleQuery.trim().length > 0 && vehicleQuery.trim().length < 2
+                ? "Введіть мінімум 2 символи"
+                : loading
+                  ? "Завантаження даних..."
+                  : tableHint}
+            </p>
+          </section>
+
+          <section id="vehicles" className="panel table-shell">
+            <div className="table-scroll">
+              <table className="data-table">
+                <colgroup>
+                  <col className="col-vehicle" />
+                  <col className="col-route" />
+                  <col className="col-number" />
+                  <col className="col-number" />
+                  <col className="col-number-wide" />
+                  <col className="col-number-wide" />
+                  <col className="col-number-wide" />
+                  <col className="col-action" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Авто</th>
+                    <th>Маршрут</th>
+                    <th className="data-table__number">Пробіг</th>
+                    <th className="data-table__number">Витрачено</th>
+                    <th className="data-table__number">Сер. розхід</th>
+                    <th className="data-table__number">1000 км</th>
+                    <th className="data-table__number">Час руху</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {!data || visibleTrips.length === 0 ? (
+                    <tr>
+                      <td colSpan={8}>
+                        <div className="empty-state">
+                          {loading
+                            ? "Завантаження..."
+                            : shouldFilterVehicles
+                              ? "Нічого не знайдено за цим номером"
+                              : "Немає даних за вибрану дату"}
+                        </div>
                       </td>
-                      <td style={{ padding: 8, fontFamily: "monospace", fontSize: 11 }}>
-                        {trip.route_key ?? "—"}
-                      </td>
-                      <td style={{ padding: 8 }}>{formatNum(trip.mileage_km)} km</td>
-                      <td style={{ padding: 8 }}>{formatNum(trip.fuel_consumed_l, " l")}</td>
-                      <td style={{ padding: 8 }}>
-                        {formatNum(trip.average_fuel_consumption_l_per_100km, " l/100")}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {formatDuration(trip.movement_duration_seconds)}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {trip.parking_count_from_trips}
-                        {trip.parking_duration_seconds != null
-                          ? ` · ${formatDuration(trip.parking_duration_seconds)}`
-                          : ""}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {formatNum(trip.average_speed_kmh)} / {formatNum(trip.max_speed_kmh)}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {formatNum(trip.rolling_1000km_consumption_l_per_100km, " l/100")}
-                      </td>
-                      <td style={{ padding: 8, fontSize: 11 }}>
-                        {formatNum(trip.starting_fuel_l)} → {formatNum(trip.ending_fuel_l)} l
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() =>
+                    </tr>
+                  ) : (
+                    visibleTrips.map((trip) => (
+                      <Fragment key={trip.id}>
+                        <VehicleRow
+                          trip={trip}
+                          expanded={expandedId === trip.id}
+                          onToggle={() =>
                             setExpandedId((current) =>
                               current === trip.id ? null : trip.id,
                             )
                           }
-                        >
-                          {expandedId === trip.id ? "Сховати" : "Деталі"}
-                        </button>
-                      </td>
-                    </tr>
-                    {expandedId === trip.id ? (
-                      <tr>
-                        <td colSpan={11} style={{ padding: "8px 8px 16px", background: "#fafafa" }}>
-                          <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>Рейси за добу</h3>
-                          {trip.segments.length === 0 ? (
-                            <em>Немає сегментів поїздок у БД</em>
-                          ) : (
-                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                              <thead>
-                                <tr style={{ borderBottom: "1px solid #ddd" }}>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Початок</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Кінець</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Тривалість</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Пробіг</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Паливо</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Vсер/макс</th>
-                                  <th style={{ padding: 6, textAlign: "left" }}>Маршрут</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {trip.segments.map((segment) => (
-                                  <tr key={segment.id} style={{ borderBottom: "1px solid #eee" }}>
-                                    <td style={{ padding: 6 }}>{formatTime(segment.started_at)}</td>
-                                    <td style={{ padding: 6 }}>{formatTime(segment.ended_at)}</td>
-                                    <td style={{ padding: 6 }}>
-                                      {formatDuration(segment.duration_seconds)}
-                                    </td>
-                                    <td style={{ padding: 6 }}>{formatNum(segment.mileage_km)} km</td>
-                                    <td style={{ padding: 6 }}>
-                                      {formatNum(segment.fuel_consumed_l, " l")}
-                                    </td>
-                                    <td style={{ padding: 6 }}>
-                                      {formatNum(segment.average_speed_kmh)} /{" "}
-                                      {formatNum(segment.max_speed_kmh)}
-                                    </td>
-                                    <td style={{ padding: 6, color: "#666" }}>
-                                      {segment.start_address ?? "—"} → {segment.end_address ?? "—"}
-                                      {segment.is_local_maneuver ? " · local" : ""}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-
-                          <h3 style={{ margin: "16px 0 8px", fontSize: 14 }}>
-                            Паузи між рейсами (обчислені, не Wialon raw)
-                          </h3>
-                          {trip.derivedPauses.length === 0 ? (
-                            <em>Немає пауз між сегментами</em>
-                          ) : (
-                            <ul style={{ margin: 0, paddingLeft: 18 }}>
-                              {trip.derivedPauses.map((pause, index) => (
-                                <li key={`${pause.startedAt}-${index}`} style={{ marginBottom: 6 }}>
-                                  {formatTime(pause.startedAt)} → {formatTime(pause.endedAt)}
-                                  {" · "}
-                                  {formatDuration(pause.durationSeconds)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      ) : null}
-    </main>
+                        />
+                        {expandedId === trip.id ? <VehicleDetails trip={trip} /> : null}
+                      </Fragment>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function VehicleRow({
+  trip,
+  expanded,
+  onToggle,
+}: {
+  trip: DailyTrip;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
-      <div style={{ color: "#666", fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 600 }}>{value}</div>
-    </div>
+    <tr className="vehicle-card-row">
+      <td colSpan={8}>
+        <div className="vehicle-card">
+          <div className="vehicle-main-grid">
+            <div className="vehicle-cell">
+              <div className="vehicle-name">
+                <Truck size={15} />
+                {trip.vehicle.display_name}
+              </div>
+              <div className="vehicle-meta mono">unit {trip.vehicle.wialon_unit_id}</div>
+            </div>
+            <div>
+              <div className="route-flags" title={trip.route_key ?? undefined}>
+                {routeFlags(trip.route_key)}
+              </div>
+            </div>
+            <div className="data-table__number mono">{formatNum(trip.mileage_km)} km</div>
+            <div className="data-table__number mono">
+              {formatNum(trip.fuel_consumed_l, " l")}
+            </div>
+            <div className="data-table__number mono">
+              {formatNum(trip.average_fuel_consumption_l_per_100km, " l/100")}
+            </div>
+            <div className="data-table__number mono">
+              {formatNum(trip.rolling_1000km_consumption_l_per_100km, " l/100")}
+            </div>
+            <div className="data-table__number mono">
+              {formatDuration(trip.movement_duration_seconds)}
+            </div>
+            <div className="data-table__number">
+              <button
+                className="button icon-button"
+                type="button"
+                onClick={onToggle}
+                aria-label={expanded ? "Сховати деталі" : "Показати деталі"}
+              >
+                {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="chip-row vehicle-statuses">
+            {trip.speedLimitExceeded ? (
+              <Badge tone="danger">
+                <AlertTriangle size={13} />
+                &gt;86
+              </Badge>
+            ) : (
+              <Badge tone="success">ok</Badge>
+            )}
+            {isAnomaly(trip.anomaly_status) ? (
+              <Badge tone="warning">{trip.anomaly_status}</Badge>
+            ) : null}
+            {trip.segments.length === 0 ? <Badge tone="warning">no trips</Badge> : null}
+            <Badge>
+              <Gauge size={13} />
+              max {formatNum(trip.max_speed_kmh, " km/h")}
+            </Badge>
+            <Badge>
+              <Clock3 size={13} />
+              стоянки {trip.parking_count_from_trips} ·{" "}
+              {formatDuration(trip.parking_duration_seconds)}
+            </Badge>
+            <Badge>
+              <Fuel size={13} />
+              ДУТ {formatNum(trip.starting_fuel_l)} → {formatNum(trip.ending_fuel_l)} l
+            </Badge>
+            {trip.route_key ? <Badge>{trip.route_key}</Badge> : null}
+          </div>
+        </div>
+      </td>
+    </tr>
   );
+}
+
+function VehicleDetails({ trip }: { trip: DailyTrip }) {
+  return (
+    <tr className="details-row" id="trips">
+      <td colSpan={8}>
+        <div className="details-panel">
+          <div className="chip-row">
+            <Badge>
+              <Clock3 size={13} />
+              рух {formatDuration(trip.movement_duration_seconds)}
+            </Badge>
+            <Badge>
+              <Fuel size={13} />
+              паливо {formatNum(trip.fuel_consumed_l, " l")}
+            </Badge>
+            <Badge tone={trip.speedLimitExceeded ? "danger" : "success"}>
+              <Gauge size={13} />
+              max {formatNum(trip.max_speed_kmh, " km/h")}
+            </Badge>
+          </div>
+
+          <div className="details-grid">
+            <section className="panel details-panel">
+              <div className="section-title">
+                <h4>Рейси за добу</h4>
+                <Badge>{trip.segments.length} rows</Badge>
+              </div>
+              <div className="table-scroll">
+                {trip.segments.length === 0 ? (
+                  <p className="empty-state">Немає сегментів поїздок у БД</p>
+                ) : (
+                  <table className="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Початок</th>
+                        <th>Кінець</th>
+                        <th>Тривалість</th>
+                        <th>Пробіг</th>
+                        <th>Паливо</th>
+                        <th>Vсер/макс</th>
+                        <th>Маршрут</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trip.segments.map((segment) => (
+                        <tr key={segment.id}>
+                          <td className="mono">{formatTime(segment.started_at)}</td>
+                          <td className="mono">{formatTime(segment.ended_at)}</td>
+                          <td className="mono">{formatDuration(segment.duration_seconds)}</td>
+                          <td className="mono">{formatNum(segment.mileage_km)} km</td>
+                          <td className="mono">{formatNum(segment.fuel_consumed_l, " l")}</td>
+                          <td className="mono">
+                            {formatNum(segment.average_speed_kmh)} /{" "}
+                            {formatNum(segment.max_speed_kmh)}
+                          </td>
+                          <td>
+                            <span className="muted">
+                              {segment.start_address ?? "-"} → {segment.end_address ?? "-"}
+                            </span>
+                            {segment.is_local_maneuver ? (
+                              <>
+                                {" "}
+                                <Badge>local</Badge>
+                              </>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </section>
+
+            <section className="panel details-panel">
+              <div className="section-title">
+                <h4>Паузи між рейсами</h4>
+                <Badge tone="warning">обчислено</Badge>
+              </div>
+              {trip.derivedPauses.length === 0 ? (
+                <p className="empty-state">Немає пауз між сегментами</p>
+              ) : (
+                <ul className="pause-list">
+                  {trip.derivedPauses.map((pause, index) => (
+                    <li className="pause-item" key={`${pause.startedAt}-${index}`}>
+                      <div className="mono">
+                        {formatTime(pause.startedAt)} → {formatTime(pause.endedAt)}
+                      </div>
+                      <div className="muted">{formatDuration(pause.durationSeconds)}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function Badge({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone?: "success" | "danger" | "warning";
+}) {
+  const toneClass = tone ? ` badge--${tone}` : "";
+  return <span className={`badge${toneClass}`}>{children}</span>;
 }

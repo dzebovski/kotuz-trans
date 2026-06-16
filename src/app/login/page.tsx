@@ -2,6 +2,7 @@
 
 import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Database, LockKeyhole, LogIn, Mail } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 function translateAuthError(message: string): string {
@@ -47,35 +48,42 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={(event) => void handleSubmit(event)} style={{ display: "grid", gap: 16 }}>
-      <label style={{ display: "grid", gap: 6 }}>
+    <form className="auth-form" onSubmit={(event) => void handleSubmit(event)}>
+      <label>
         Email
-        <input
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          style={{ padding: "8px 10px" }}
-        />
+        <span className="input-with-icon">
+          <Mail size={15} />
+          <input
+            className="input"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </span>
       </label>
 
-      <label style={{ display: "grid", gap: 6 }}>
+      <label>
         Пароль
-        <input
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          style={{ padding: "8px 10px" }}
-        />
+        <span className="input-with-icon">
+          <LockKeyhole size={15} />
+          <input
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </span>
       </label>
 
-      {error ? <p style={{ color: "#b00020", margin: 0 }}>{error}</p> : null}
+      {error ? <div className="error-banner">{error}</div> : null}
 
-      <button type="submit" disabled={loading} style={{ padding: "10px 12px" }}>
-        {loading ? "Вхід…" : "Увійти"}
+      <button className="button button--primary" type="submit" disabled={loading}>
+        <LogIn size={16} />
+        {loading ? "Вхід..." : "Увійти"}
       </button>
     </form>
   );
@@ -83,20 +91,18 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <main
-      style={{
-        fontFamily: "system-ui, sans-serif",
-        padding: "1.5rem",
-        maxWidth: 420,
-        margin: "4rem auto",
-      }}
-    >
-      <h1 style={{ marginBottom: 8 }}>Fleet Analytics</h1>
-      <p style={{ color: "#555", marginBottom: 24 }}>Увійдіть, щоб переглянути звіти</p>
+    <main className="auth-page">
+      <section className="panel auth-card">
+        <div className="brand-mark">
+          <Database size={18} />
+        </div>
+        <h1>Fleet Analytics</h1>
+        <p>Увійдіть, щоб переглянути подобові звіти флоту.</p>
 
-      <Suspense fallback={<p>Завантаження…</p>}>
-        <LoginForm />
-      </Suspense>
+        <Suspense fallback={<p className="muted">Завантаження...</p>}>
+          <LoginForm />
+        </Suspense>
+      </section>
     </main>
   );
 }
