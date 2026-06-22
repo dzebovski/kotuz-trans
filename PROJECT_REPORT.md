@@ -1,13 +1,20 @@
 # Fleet Analytics — звіт для ШІ-агентів
 
 Документ описує поточний стан проєкту, архітектуру, відомі підводні камені та робочий процес.  
-Оновлено: 2026-06-15.
+Оновлено: 2026-06-16.
 
 ## Мета проєкту
 
 Щоденний збір даних флоту з **Moniterra/Wialon**, нормалізація в **Supabase**, детекція аномалій палива, локальний перегляд і (опційно) звіт у **Telegram**.
 
 Флот: **24 активні ТЗ**, бізнес-день у timezone `Europe/Kyiv`.
+
+---
+
+## Останні зміни (зріз перед новими правками)
+
+- Розширено ingestion і дашборд: добові метрики руху/стоянок із `.Поездки` stats + rolling розхід ~1000 км (див. `07-fleet-analytics-report.md`, міграція `supabase/migrations/003_daily_trips_fleet_metrics.sql`).
+- Оновлено UI: покращено стилі та UX логіну/помилок; актуалізовано вигляд локального дашборду (останній коміт: “Enhance login UI…”).
 
 ---
 
@@ -21,7 +28,7 @@
 | Зовнішні API | Wialon Remote API, Telegram Bot API |
 | Дати | Luxon |
 | Валідація env | Zod |
-| Тести | Vitest (38 тестів) |
+| Тести | Vitest (55 тестів) |
 
 ---
 
@@ -120,7 +127,8 @@ anal/
 │   └── test-integrations.ts
 ├── supabase/migrations/
 │   ├── 001_initial_schema.sql
-│   └── 002_trip_segments_metrics.sql
+│   ├── 002_trip_segments_metrics.sql
+│   └── 003_daily_trips_fleet_metrics.sql
 ├── tests/                      # unit + integration + fixtures
 ├── AGENTS.md                   # правила відповіді користувачу (UA)
 └── README.md                   # setup/deploy

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock3,
@@ -84,11 +85,38 @@ type ReportResponse = {
     withSegments: number;
   };
   trips: DailyTrip[];
+  ingestion: {
+    status: "running" | "completed" | "partial" | "failed" | null;
+    successfulVehicles: number;
+    failedVehicles: number;
+    processedVehicles: number;
+    expectedVehicles: number;
+    startedAt: string | null;
+    heartbeatAt: string | null;
+    completedAt: string | null;
+    phase: "starting" | "processing" | "finalizing" | null;
+    currentVehicles: Array<{
+      wialonUnitId: number;
+      displayName: string;
+    }>;
+    hasData: boolean;
+  };
+};
+
+type IngestionResponse = {
+  ok: boolean;
+  status: "completed" | "partial" | "failed" | "skipped";
+  reportDate: string;
+  reason?: string;
+  processed: number;
+  expected: number;
 };
 
 type ThemeMode = "light" | "dark";
 
 const THEME_STORAGE_KEY = "fleet-dashboard-theme";
+const BUSINESS_TIMEZONE = "Europe/Kyiv";
+const INGESTION_POLL_INTERVAL_MS = 2_000;
 
 const navItems = [
   { label: "Dashboard", href: "#overview", icon: LayoutDashboard },
@@ -121,6 +149,26 @@ function formatTime(iso: string): string {
     day: "2-digit",
     month: "2-digit",
   });
+}
+
+function formatDateLabel(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function formatElapsed(startedAt: string | null, now: number): string {
+  if (!startedAt) {
+    return "щойно";
+  }
+  const seconds = Math.max(
+    0,
+    Math.floor((now - new Date(startedAt).getTime()) / 1000),
+  );
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0
+    ? `${minutes} хв ${remainingSeconds} с`
+    : `${remainingSeconds} с`;
 }
 
 function isAnomaly(status: string): boolean {
@@ -166,12 +214,12 @@ function describeNonJsonResponse(status: number, body: string): string {
     : `API повернув HTML замість JSON (${status})`;
 }
 
-async function readReportResponse(response: Response): Promise<ReportResponse> {
+async function readJsonResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
-  let json: (ReportResponse & { error?: string }) | null = null;
+  let json: (T & { error?: string }) | null = null;
 
   try {
-    json = JSON.parse(text) as ReportResponse & { error?: string };
+    json = JSON.parse(text) as T & { error?: string };
   } catch {
     if (!response.ok) {
       throw new Error(describeNonJsonResponse(response.status, text));
@@ -186,36 +234,108 @@ async function readReportResponse(response: Response): Promise<ReportResponse> {
   return json;
 }
 
+function getKyivDate(offsetDays = 0): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = new Date(
+    Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day) + offsetDays,
+    ),
+  );
+  return date.toISOString().slice(0, 10);
+}
+
+function ingestionLabel(data: ReportResponse | null): string {
+  const ingestion = data?.ingestion;
+  if (!ingestion?.status) {
+    return "Дані ще не завантажувалися";
+  }
+  if (ingestion.status === "running") {
+    return "Завантаження виконується";
+  }
+  if (ingestion.status === "failed") {
+    return "Останнє завантаження не вдалося";
+  }
+
+  const counts = `${ingestion.successfulVehicles}/${ingestion.expectedVehicles}`;
+  return ingestion.status === "partial"
+    ? `Завантажено частково: ${counts}`
+    : `Завантажено: ${counts}`;
+}
+
 export default function HomePage() {
   const router = useRouter();
-  const [date, setDate] = useState("2026-06-14");
+  const [date, setDate] = useState(() => getKyivDate(-1));
   const [data, setData] = useState<ReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ingesting, setIngesting] = useState(false);
+  const [progressClock, setProgressClock] = useState(() => Date.now());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [vehicleQuery, setVehicleQuery] = useState("");
   const [theme, setTheme] = useState<ThemeMode>("dark");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const response = await fetch(`/api/reports/daily?date=${date}`);
-      const json = await readReportResponse(response);
+      const json = await readJsonResponse<ReportResponse>(response);
       setData(json);
+      return json;
     } catch (loadError) {
-      setData(null);
+      if (!options.silent) {
+        setData(null);
+      }
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load report",
       );
+      return null;
     } finally {
-      setLoading(false);
+      if (!options.silent) {
+        setLoading(false);
+      }
     }
   }, [date]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!ingesting && data?.ingestion.status !== "running") {
+      return;
+    }
+
+    void load({ silent: true });
+    const intervalId = window.setInterval(() => {
+      void load({ silent: true });
+    }, INGESTION_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [data?.ingestion.status, ingesting, load]);
+
+  useEffect(() => {
+    if (!ingesting && data?.ingestion.status !== "running") {
+      return;
+    }
+
+    setProgressClock(Date.now());
+    const intervalId = window.setInterval(() => {
+      setProgressClock(Date.now());
+    }, 1_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [data?.ingestion.status, ingesting]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -243,6 +363,46 @@ export default function HomePage() {
     router.refresh();
   }
 
+  function handleDateChange(nextDate: string) {
+    setDate(nextDate);
+    setData(null);
+    setError(null);
+    setExpandedId(null);
+  }
+
+  async function handleIngest() {
+    const force = data?.ingestion.hasData ?? false;
+    setIngesting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/reports/daily", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ date, force }),
+      });
+      const result = await readJsonResponse<IngestionResponse>(response);
+
+      if (result.status === "failed") {
+        throw new Error("Не вдалося завантажити дані за вибрану дату");
+      }
+
+      await load({ silent: true });
+    } catch (ingestError) {
+      const latest = await load({ silent: true });
+      const processStillRunning = latest?.ingestion.status === "running";
+      setError(
+        processStillRunning
+          ? "Зв’язок із запитом перервався, але завантаження продовжується. Статус оновлюється автоматично."
+          : ingestError instanceof Error
+            ? ingestError.message
+            : "Не вдалося завантажити дані",
+      );
+    } finally {
+      setIngesting(false);
+    }
+  }
+
   const reportDate = data?.summary.reportDate ?? date;
   const normalizedVehicleQuery = vehicleQuery.trim().toLowerCase();
   const shouldFilterVehicles = normalizedVehicleQuery.length >= 2;
@@ -254,6 +414,42 @@ export default function HomePage() {
   const tableHint = shouldFilterVehicles
     ? `Знайдено ${visibleTrips.length} з ${data?.trips.length ?? 0}`
     : `${data?.trips.length ?? 0} рядків`;
+  const ingestionRunning = data?.ingestion.status === "running";
+  const actionBusy = ingesting || ingestionRunning;
+  const checkingDate = loading && !data;
+  const actionDisabled = actionBusy || checkingDate;
+  const actionLabel = actionBusy
+    ? "Завантаження…"
+    : checkingDate
+      ? "Перевірка…"
+      : data?.ingestion.hasData
+        ? "Перезавантажити дані"
+        : "Завантажити дані";
+  const statusTone =
+    data?.ingestion.status === "failed"
+      ? "danger"
+      : data?.ingestion.status === "partial"
+        ? "warning"
+        : data?.ingestion.status === "completed"
+          ? "success"
+          : undefined;
+  const serverProgress = ingestionRunning ? data?.ingestion : null;
+  const progressExpected =
+    serverProgress?.expectedVehicles ?? data?.ingestion.expectedVehicles ?? 0;
+  const progressProcessed = serverProgress?.processedVehicles ?? 0;
+  const progressSuccessful = serverProgress?.successfulVehicles ?? 0;
+  const progressFailed = serverProgress?.failedVehicles ?? 0;
+  const progressRemaining = Math.max(
+    0,
+    progressExpected - progressProcessed,
+  );
+  const progressPercent =
+    progressExpected > 0
+      ? Math.min(100, Math.round((progressProcessed / progressExpected) * 100))
+      : 0;
+  const progressPhase = serverProgress?.phase ?? "starting";
+  const currentVehicles = serverProgress?.currentVehicles ?? [];
+  const progressStartedAt = serverProgress?.startedAt ?? null;
 
   return (
     <div className="app-shell">
@@ -302,15 +498,6 @@ export default function HomePage() {
               {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
               {theme === "dark" ? "Темна" : "Світла"}
             </button>
-            <button
-              className="button"
-              type="button"
-              onClick={() => void load()}
-              disabled={loading}
-            >
-              <RefreshCw size={16} />
-              {loading ? "Оновлення" : "Оновити"}
-            </button>
             <button className="button button--ghost" type="button" onClick={() => void handleSignOut()}>
               <LogOut size={16} />
               Вийти
@@ -351,9 +538,26 @@ export default function HomePage() {
                   className="input mono"
                   type="date"
                   value={date}
-                  onChange={(event) => setDate(event.target.value)}
+                  max={getKyivDate()}
+                  disabled={actionBusy}
+                  onChange={(event) => handleDateChange(event.target.value)}
                 />
               </label>
+              <button
+                className="button button--primary ingest-button"
+                type="button"
+                onClick={() => void handleIngest()}
+                disabled={actionDisabled}
+              >
+                <RefreshCw
+                  className={actionBusy ? "spin" : undefined}
+                  size={16}
+                />
+                {actionLabel}
+              </button>
+              {!checkingDate ? (
+                <Badge tone={statusTone}>{ingestionLabel(data)}</Badge>
+              ) : null}
             </div>
             <label className="search-field">
               <Search size={15} />
@@ -373,6 +577,21 @@ export default function HomePage() {
                   : tableHint}
             </p>
           </section>
+
+          {actionBusy ? (
+            <IngestionProgress
+              date={date}
+              phase={progressPhase}
+              processed={progressProcessed}
+              expected={progressExpected}
+              successful={progressSuccessful}
+              failed={progressFailed}
+              remaining={progressRemaining}
+              percent={progressPercent}
+              currentVehicles={currentVehicles}
+              elapsed={formatElapsed(progressStartedAt, progressClock)}
+            />
+          ) : null}
 
           <section id="vehicles" className="panel table-shell">
             <div className="table-scroll">
@@ -403,12 +622,28 @@ export default function HomePage() {
                   {!data || visibleTrips.length === 0 ? (
                     <tr>
                       <td colSpan={8}>
-                        <div className="empty-state">
-                          {loading
-                            ? "Завантаження..."
-                            : shouldFilterVehicles
-                              ? "Нічого не знайдено за цим номером"
-                              : "Немає даних за вибрану дату"}
+                        <div className="empty-state empty-state--action">
+                          <p>
+                            {loading
+                              ? "Перевіряємо дані за вибрану дату…"
+                              : shouldFilterVehicles
+                                ? "Нічого не знайдено за цим номером"
+                                : "За вибрану дату дані ще не завантажені."}
+                          </p>
+                          {!loading && !shouldFilterVehicles ? (
+                            <button
+                              className="button button--primary"
+                              type="button"
+                              onClick={() => void handleIngest()}
+                              disabled={actionDisabled}
+                            >
+                              <RefreshCw
+                                className={actionBusy ? "spin" : undefined}
+                                size={16}
+                              />
+                              {actionLabel}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -435,6 +670,112 @@ export default function HomePage() {
         </div>
       </main>
     </div>
+  );
+}
+
+function IngestionProgress({
+  date,
+  phase,
+  processed,
+  expected,
+  successful,
+  failed,
+  remaining,
+  percent,
+  currentVehicles,
+  elapsed,
+}: {
+  date: string;
+  phase: "starting" | "processing" | "finalizing";
+  processed: number;
+  expected: number;
+  successful: number;
+  failed: number;
+  remaining: number;
+  percent: number;
+  currentVehicles: Array<{
+    wialonUnitId: number;
+    displayName: string;
+  }>;
+  elapsed: string;
+}) {
+  const phaseLabel =
+    phase === "finalizing"
+      ? "Завершуємо обробку"
+      : phase === "processing"
+        ? "Отримуємо звіти по машинах"
+        : "Готуємо список машин";
+  const currentLabel =
+    currentVehicles.length > 0
+      ? currentVehicles.map((vehicle) => vehicle.displayName).join(", ")
+      : phase === "finalizing"
+        ? "Усі машини оброблені"
+        : phase === "starting"
+          ? "Формуємо список машин"
+          : "Очікуємо наступну пачку";
+
+  return (
+    <section
+      className="panel ingestion-progress"
+      aria-live="polite"
+      aria-label="Прогрес завантаження даних"
+    >
+      <div className="ingestion-progress__header">
+        <div>
+          <p className="eyebrow">Завантаження активне</p>
+          <h3>Оновлюємо дані за {formatDateLabel(date)}</h3>
+          <p>{phaseLabel}. Таблиця оновлюється автоматично.</p>
+        </div>
+        <div className="ingestion-progress__total mono">
+          <strong>{processed}</strong>
+          <span>з {expected || "—"} машин</span>
+        </div>
+      </div>
+
+      <div
+        className="progress-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={expected || 1}
+        aria-valuenow={processed}
+        aria-valuetext={`${processed} з ${expected} машин, ${percent}%`}
+      >
+        <span
+          className="progress-track__fill"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="ingestion-progress__meta">
+        <div className="current-vehicles">
+          <span className="current-vehicles__pulse" aria-hidden="true" />
+          <div>
+            <span className="muted">Зараз обробляються</span>
+            <strong>{currentLabel}</strong>
+          </div>
+        </div>
+        <strong className="mono">{percent}%</strong>
+      </div>
+
+      <div className="ingestion-progress__stats">
+        <span>
+          <CheckCircle2 size={15} />
+          Успішно <strong>{successful}</strong>
+        </span>
+        <span className={failed > 0 ? "progress-stat--danger" : undefined}>
+          <AlertTriangle size={15} />
+          З помилкою <strong>{failed}</strong>
+        </span>
+        <span>
+          <Truck size={15} />
+          Залишилось <strong>{remaining}</strong>
+        </span>
+        <span>
+          <Clock3 size={15} />
+          Триває <strong>{elapsed}</strong>
+        </span>
+      </div>
+    </section>
   );
 }
 

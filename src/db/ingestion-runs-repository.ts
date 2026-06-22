@@ -1,6 +1,12 @@
 import { getSupabaseAdmin } from "./supabase-admin";
 
 export type IngestionStatus = "running" | "completed" | "partial" | "failed";
+export type IngestionPhase = "starting" | "processing" | "finalizing";
+
+export type IngestionCurrentVehicle = {
+  wialonUnitId: number;
+  displayName: string;
+};
 
 export type IngestionRunRecord = {
   id: string;
@@ -18,6 +24,13 @@ export type IngestionRunRecord = {
 };
 
 const STALE_THRESHOLD_MS = 15 * 60 * 1000;
+
+function initialProgressMetadata(): Record<string, unknown> {
+  return {
+    phase: "starting" satisfies IngestionPhase,
+    currentVehicles: [] satisfies IngestionCurrentVehicle[],
+  };
+}
 
 export async function getIngestionRun(
   jobName: string,
@@ -57,6 +70,7 @@ export async function acquireIngestionLock(input: {
         successful_vehicles: 0,
         failed_vehicles: 0,
         heartbeat_at: new Date().toISOString(),
+        metadata: initialProgressMetadata(),
       })
       .select("*")
       .single();
@@ -73,20 +87,21 @@ export async function acquireIngestionLock(input: {
   const heartbeatAge = Date.now() - new Date(existing.heartbeat_at).getTime();
   const isStaleRunning =
     existing.status === "running" && heartbeatAge > STALE_THRESHOLD_MS;
+  if (existing.status === "running" && !isStaleRunning) {
+    return { action: "skip", reason: "already_running", run: existing };
+  }
+
   const canRetry =
     input.force ||
     existing.status === "failed" ||
     existing.status === "partial" ||
     isStaleRunning;
 
-  if (!canRetry && existing.status === "running") {
-    return { action: "skip", reason: "already_running", run: existing };
-  }
-
   if (!canRetry) {
     return { action: "skip", reason: "already_processed", run: existing };
   }
 
+  const restartedAt = new Date().toISOString();
   const { data, error } = await getSupabaseAdmin()
     .from("ingestion_runs")
     .update({
@@ -94,9 +109,11 @@ export async function acquireIngestionLock(input: {
       expected_vehicles: input.expectedVehicles,
       successful_vehicles: 0,
       failed_vehicles: 0,
+      started_at: restartedAt,
       completed_at: null,
       error_summary: [],
-      heartbeat_at: new Date().toISOString(),
+      heartbeat_at: restartedAt,
+      metadata: initialProgressMetadata(),
     })
     .eq("id", existing.id)
     .eq("heartbeat_at", existing.heartbeat_at)
@@ -117,13 +134,27 @@ export async function acquireIngestionLock(input: {
   return { action: "start", run: data as IngestionRunRecord };
 }
 
-export async function updateIngestionHeartbeat(runId: string): Promise<void> {
+export async function updateIngestionProgress(input: {
+  runId: string;
+  successfulVehicles: number;
+  failedVehicles: number;
+  phase: IngestionPhase;
+  currentVehicles: IngestionCurrentVehicle[];
+}): Promise<void> {
   const { error } = await getSupabaseAdmin()
     .from("ingestion_runs")
-    .update({ heartbeat_at: new Date().toISOString() })
-    .eq("id", runId);
+    .update({
+      successful_vehicles: input.successfulVehicles,
+      failed_vehicles: input.failedVehicles,
+      heartbeat_at: new Date().toISOString(),
+      metadata: {
+        phase: input.phase,
+        currentVehicles: input.currentVehicles,
+      },
+    })
+    .eq("id", input.runId);
   if (error) {
-    throw new Error(`Failed to update heartbeat: ${error.message}`);
+    throw new Error(`Failed to update ingestion progress: ${error.message}`);
   }
 }
 

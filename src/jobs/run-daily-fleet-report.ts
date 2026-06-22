@@ -6,7 +6,7 @@ import { getServerEnv } from "@/config/env";
 import {
   acquireIngestionLock,
   finalizeIngestionRun,
-  updateIngestionHeartbeat,
+  updateIngestionProgress,
 } from "@/db/ingestion-runs-repository";
 import { listActiveVehicles } from "@/db/vehicles-repository";
 import { processVehicle } from "@/jobs/process-vehicle";
@@ -32,7 +32,7 @@ export type RunDailyFleetReportResult = {
   summary?: ReturnType<typeof buildFleetSummary>;
 };
 
-const JOB_NAME = "daily-fleet-report";
+export const DAILY_FLEET_REPORT_JOB_NAME = "daily-fleet-report";
 
 export async function runDailyFleetReport(
   options: RunDailyFleetReportOptions = {},
@@ -44,7 +44,7 @@ export async function runDailyFleetReport(
   const vehicles = await listActiveVehicles();
 
   const lock = await acquireIngestionLock({
-    jobName: JOB_NAME,
+    jobName: DAILY_FLEET_REPORT_JOB_NAME,
     reportDate,
     expectedVehicles: vehicles.length,
     force: options.force,
@@ -86,6 +86,17 @@ export async function runDailyFleetReport(
 
     const batchSize = Math.min(env.WIALON_CONCURRENCY, pending.length);
     const batch = pending.splice(0, batchSize);
+    await updateIngestionProgress({
+      runId: run.id,
+      successfulVehicles: successful.length,
+      failedVehicles: failedVehicles.length,
+      phase: "processing",
+      currentVehicles: batch.map((vehicle) => ({
+        wialonUnitId: vehicle.wialon_unit_id,
+        displayName: vehicle.display_name,
+      })),
+    });
+
     const results = await mapWithConcurrency(batch, batch.length, (vehicle) =>
       processVehicle({
         vehicle,
@@ -120,8 +131,22 @@ export async function runDailyFleetReport(
       }
     }
 
-    await updateIngestionHeartbeat(run.id);
+    await updateIngestionProgress({
+      runId: run.id,
+      successfulVehicles: successful.length,
+      failedVehicles: failedVehicles.length,
+      phase: "processing",
+      currentVehicles: [],
+    });
   }
+
+  await updateIngestionProgress({
+    runId: run.id,
+    successfulVehicles: successful.length,
+    failedVehicles: failedVehicles.length,
+    phase: "finalizing",
+    currentVehicles: [],
+  });
 
   const status =
     successful.length === 0
@@ -157,6 +182,8 @@ export async function runDailyFleetReport(
     metadata: {
       telegramError,
       reportDate,
+      phase: "finalizing",
+      currentVehicles: [],
     },
   });
 

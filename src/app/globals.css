@@ -372,6 +372,20 @@ code,
   background: transparent;
 }
 
+.ingest-button {
+  white-space: nowrap;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .theme-toggle {
   min-width: 92px;
 }
@@ -387,7 +401,10 @@ code,
 
 .search-toolbar {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(280px, 420px) minmax(140px, 1fr);
+  grid-template-columns:
+    minmax(420px, 1.6fr)
+    minmax(240px, 0.9fr)
+    minmax(110px, 0.5fr);
   align-items: center;
 }
 
@@ -421,6 +438,172 @@ code,
 .search-hint {
   margin: 0;
   text-align: right;
+}
+
+.ingestion-progress {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 16px;
+  border-color: color-mix(in srgb, var(--accent-strong) 46%, var(--border));
+  background:
+    linear-gradient(110deg, var(--accent-muted), transparent 48%),
+    var(--bg-elevated);
+}
+
+.ingestion-progress::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent-strong);
+  content: "";
+}
+
+.ingestion-progress__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.ingestion-progress__header .eyebrow {
+  margin-bottom: 3px;
+}
+
+.ingestion-progress__header h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.ingestion-progress__header p:not(.eyebrow) {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ingestion-progress__total {
+  min-width: 98px;
+  display: grid;
+  justify-items: end;
+  line-height: 1.1;
+}
+
+.ingestion-progress__total strong {
+  color: var(--accent-strong);
+  font-size: 25px;
+}
+
+.ingestion-progress__total span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.progress-track {
+  height: 9px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+}
+
+.progress-track__fill {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--accent-strong);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 54%, transparent);
+  transition: width 320ms ease;
+}
+
+.ingestion-progress__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.current-vehicles {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.current-vehicles__pulse {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 0 var(--accent-muted);
+  animation: status-pulse 1.8s ease-out infinite;
+}
+
+@keyframes status-pulse {
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.current-vehicles div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.current-vehicles span {
+  font-size: 11px;
+}
+
+.current-vehicles strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingestion-progress__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ingestion-progress__stats > span {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.ingestion-progress__stats svg {
+  color: var(--accent-strong);
+}
+
+.ingestion-progress__stats strong {
+  color: var(--text);
+}
+
+.ingestion-progress__stats .progress-stat--danger {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+  background: var(--danger-muted);
+}
+
+.ingestion-progress__stats .progress-stat--danger svg,
+.ingestion-progress__stats .progress-stat--danger strong {
+  color: var(--danger);
 }
 
 .table-scroll {
@@ -700,6 +883,20 @@ code,
   color: var(--text-muted);
 }
 
+.empty-state--action {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 28px;
+  text-align: center;
+}
+
+.empty-state--action p {
+  margin: 0;
+}
+
 .error-banner {
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
   border-radius: var(--radius-md);
@@ -779,7 +976,31 @@ code,
     text-align: left;
   }
 
+  .ingestion-progress__header {
+    gap: 12px;
+  }
+
+  .ingestion-progress__total {
+    min-width: 76px;
+  }
+
+  .ingestion-progress__stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .details-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .current-vehicles__pulse {
+    animation: none;
+  }
+
+  .progress-track__fill {
+    transition: none;
   }
 }
