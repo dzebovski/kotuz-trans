@@ -530,7 +530,7 @@ export default function HomePage() {
 
           {error ? <div className="error-banner">{error}</div> : null}
 
-          <section className="panel toolbar search-toolbar">
+          <section className="panel toolbar">
             <div className="filter-row">
               <label className="date-field">
                 <CalendarDays size={15} />
@@ -559,23 +559,6 @@ export default function HomePage() {
                 <Badge tone={statusTone}>{ingestionLabel(data)}</Badge>
               ) : null}
             </div>
-            <label className="search-field">
-              <Search size={15} />
-              <input
-                className="input"
-                type="search"
-                placeholder="Пошук по номеру машини..."
-                value={vehicleQuery}
-                onChange={(event) => setVehicleQuery(event.target.value)}
-              />
-            </label>
-            <p className="muted search-hint">
-              {vehicleQuery.trim().length > 0 && vehicleQuery.trim().length < 2
-                ? "Введіть мінімум 2 символи"
-                : loading
-                  ? "Завантаження даних..."
-                  : tableHint}
-            </p>
           </section>
 
           {actionBusy ? (
@@ -592,6 +575,26 @@ export default function HomePage() {
               elapsed={formatElapsed(progressStartedAt, progressClock)}
             />
           ) : null}
+
+          <section className="panel vehicle-search-row" aria-label="Пошук автомобіля">
+            <label className="search-field">
+              <Search size={15} />
+              <input
+                className="input"
+                type="search"
+                placeholder="Пошук по номеру машини..."
+                value={vehicleQuery}
+                onChange={(event) => setVehicleQuery(event.target.value)}
+              />
+            </label>
+            <p className="muted search-hint" aria-live="polite">
+              {vehicleQuery.trim().length > 0 && vehicleQuery.trim().length < 2
+                ? "Введіть мінімум 2 символи"
+                : loading
+                  ? "Завантаження даних..."
+                  : tableHint}
+            </p>
+          </section>
 
           <section id="vehicles" className="panel table-shell">
             <div className="table-scroll">
