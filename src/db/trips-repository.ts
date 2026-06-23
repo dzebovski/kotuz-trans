@@ -1,4 +1,5 @@
 import type { BaselineHistoryRow } from "@/analytics/baseline";
+import type { RangeDailyTrip } from "@/analytics/range-report";
 import { getSupabaseAdmin } from "./supabase-admin";
 
 export type DailyTripUpsert = {
@@ -162,6 +163,124 @@ export async function getRecentTripSegmentsForVehicle(input: {
     mileage_km: Number(row.mileage_km),
     fuel_consumed_l: (row.fuel_consumed_l as number | null) ?? null,
   }));
+}
+
+export async function getTripSegmentsForVehicleThrough(input: {
+  vehicleId: string;
+  throughEndedAt: string;
+  limit?: number;
+}): Promise<RecentTripSegmentRow[]> {
+  const limit = input.limit ?? 200;
+  const { data, error } = await getSupabaseAdmin()
+    .from("trip_segments")
+    .select(
+      `
+      ended_at,
+      mileage_km,
+      fuel_consumed_l,
+      daily_trips!inner (
+        vehicle_id
+      )
+    `,
+    )
+    .eq("daily_trips.vehicle_id", input.vehicleId)
+    .lte("ended_at", input.throughEndedAt)
+    .order("ended_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    throw new Error(`Failed to load rolling trip segments: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    ended_at: row.ended_at as string,
+    mileage_km: Number(row.mileage_km),
+    fuel_consumed_l:
+      row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+  }));
+}
+
+export type DerivedMetricDailyTrip = {
+  id: string;
+  reportDate: string;
+  intervalEnd: string;
+  routeKey: string | null;
+  routeTag: string | null;
+  highwayRatio: number | null;
+  mileageKm: number;
+  averageFuelConsumptionLPer100Km: number | null;
+};
+
+export async function listVehicleDailyTripsAfterDate(
+  vehicleId: string,
+  reportDate: string,
+): Promise<DerivedMetricDailyTrip[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .select(
+      `
+      id,
+      report_date,
+      interval_end,
+      route_key,
+      route_tag,
+      highway_ratio,
+      mileage_km,
+      average_fuel_consumption_l_per_100km
+    `,
+    )
+    .eq("vehicle_id", vehicleId)
+    .gt("report_date", reportDate)
+    .order("report_date");
+  if (error) {
+    throw new Error(`Failed to load future daily trips: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    reportDate: row.report_date as string,
+    intervalEnd: row.interval_end as string,
+    routeKey: (row.route_key as string | null) ?? null,
+    routeTag: (row.route_tag as string | null) ?? null,
+    highwayRatio:
+      row.highway_ratio == null ? null : Number(row.highway_ratio),
+    mileageKm: Number(row.mileage_km),
+    averageFuelConsumptionLPer100Km:
+      row.average_fuel_consumption_l_per_100km == null
+        ? null
+        : Number(row.average_fuel_consumption_l_per_100km),
+  }));
+}
+
+export async function updateDailyTripDerivedMetrics(input: {
+  dailyTripId: string;
+  baselineScope: string | null;
+  baselineSampleSize: number | null;
+  baselineAverageLPer100Km: number | null;
+  baselineStddevLPer100Km: number | null;
+  deviationPercent: number | null;
+  anomalyStatus: string;
+  isAnomaly: boolean;
+  rollingDistanceKm: number | null;
+  rollingFuelL: number | null;
+  rollingConsumptionLPer100Km: number | null;
+}): Promise<void> {
+  const { error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .update({
+      baseline_scope: input.baselineScope,
+      baseline_sample_size: input.baselineSampleSize,
+      baseline_average_l_per_100km: input.baselineAverageLPer100Km,
+      baseline_stddev_l_per_100km: input.baselineStddevLPer100Km,
+      deviation_percent: input.deviationPercent,
+      anomaly_status: input.anomalyStatus,
+      is_anomaly: input.isAnomaly,
+      rolling_1000km_distance_km: input.rollingDistanceKm,
+      rolling_1000km_fuel_l: input.rollingFuelL,
+      rolling_1000km_consumption_l_per_100km:
+        input.rollingConsumptionLPer100Km,
+    })
+    .eq("id", input.dailyTripId);
+  if (error) {
+    throw new Error(`Failed to update derived metrics: ${error.message}`);
+  }
 }
 
 export async function listDailyTripsForReportDate(reportDate: string): Promise<
@@ -333,6 +452,123 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
   });
 }
 
+export async function listDailyTripsForRange(
+  from: string,
+  to: string,
+): Promise<RangeDailyTrip[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .select(
+      `
+      id,
+      report_date,
+      mileage_km,
+      fuel_consumed_l,
+      average_fuel_consumption_l_per_100km,
+      rolling_1000km_consumption_l_per_100km,
+      movement_duration_seconds,
+      parking_count_from_trips,
+      parking_duration_seconds,
+      max_speed_kmh,
+      anomaly_status,
+      route_key,
+      vehicles!inner (
+        id,
+        display_name,
+        tractor_number,
+        wialon_unit_id
+      )
+    `,
+    )
+    .gte("report_date", from)
+    .lte("report_date", to)
+    .order("report_date");
+  if (error) {
+    throw new Error(`Failed to load date range trips: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const relation = row.vehicles as unknown;
+    const vehicle = (Array.isArray(relation) ? relation[0] : relation) as {
+      id: string;
+      display_name: string;
+      tractor_number: string;
+      wialon_unit_id: number;
+    };
+    return {
+      id: row.id as string,
+      reportDate: row.report_date as string,
+      mileageKm: Number(row.mileage_km),
+      fuelConsumedL:
+        row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+      averageFuelConsumptionLPer100Km:
+        row.average_fuel_consumption_l_per_100km == null
+          ? null
+          : Number(row.average_fuel_consumption_l_per_100km),
+      rolling1000KmConsumptionLPer100Km:
+        row.rolling_1000km_consumption_l_per_100km == null
+          ? null
+          : Number(row.rolling_1000km_consumption_l_per_100km),
+      movementDurationSeconds:
+        (row.movement_duration_seconds as number | null) ?? null,
+      parkingCount: Number(row.parking_count_from_trips ?? 0),
+      parkingDurationSeconds:
+        (row.parking_duration_seconds as number | null) ?? null,
+      maxSpeedKmh:
+        row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
+      anomalyStatus: row.anomaly_status as string,
+      routeKey: (row.route_key as string | null) ?? null,
+      vehicle: {
+        id: vehicle.id,
+        displayName: vehicle.display_name,
+        tractorNumber: vehicle.tractor_number,
+        wialonUnitId: Number(vehicle.wialon_unit_id),
+      },
+    };
+  });
+}
+
+export async function listTripSegmentsForDailyTrip(dailyTripId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("trip_segments")
+    .select(
+      `
+      id,
+      started_at,
+      ended_at,
+      duration_seconds,
+      mileage_km,
+      fuel_consumed_l,
+      average_speed_kmh,
+      max_speed_kmh,
+      start_address,
+      end_address,
+      is_local_maneuver
+    `,
+    )
+    .eq("daily_trip_id", dailyTripId)
+    .order("started_at");
+  if (error) {
+    throw new Error(`Failed to load trip details: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    started_at: row.started_at as string,
+    ended_at: row.ended_at as string,
+    duration_seconds: (row.duration_seconds as number | null) ?? null,
+    mileage_km: Number(row.mileage_km),
+    fuel_consumed_l:
+      row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+    average_speed_kmh:
+      row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
+    max_speed_kmh:
+      row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
+    start_address: (row.start_address as string | null) ?? null,
+    end_address: (row.end_address as string | null) ?? null,
+    is_local_maneuver: Boolean(row.is_local_maneuver),
+  }));
+}
+
 export async function upsertDailyTripWithSegments(input: {
   dailyTrip: DailyTripUpsert;
   segments: TripSegmentUpsert[];
@@ -417,6 +653,49 @@ export async function upsertDailyTripWithSegments(input: {
       });
     if (fuelError) {
       throw new Error(`Failed to upsert fuel events: ${fuelError.message}`);
+    }
+
+    const keepKeys = new Set(
+      input.fuelEvents.map(
+        (event) =>
+          `${event.vehicle_id}:${event.event_type}:${event.event_time}:${event.volume_l}`,
+      ),
+    );
+    const { data: existingFuelEvents, error: existingFuelError } = await supabase
+      .from("fuel_events")
+      .select("id,vehicle_id,event_type,event_time,volume_l")
+      .eq("daily_trip_id", dailyTripId);
+    if (existingFuelError) {
+      throw new Error(
+        `Failed to read existing fuel events: ${existingFuelError.message}`,
+      );
+    }
+    const staleFuelEventIds = (existingFuelEvents ?? [])
+      .filter(
+        (event) =>
+          !keepKeys.has(
+            `${event.vehicle_id as string}:${event.event_type as string}:${event.event_time as string}:${Number(event.volume_l)}`,
+          ),
+      )
+      .map((event) => event.id as string);
+    if (staleFuelEventIds.length > 0) {
+      const { error: deleteFuelError } = await supabase
+        .from("fuel_events")
+        .delete()
+        .in("id", staleFuelEventIds);
+      if (deleteFuelError) {
+        throw new Error(
+          `Failed to delete stale fuel events: ${deleteFuelError.message}`,
+        );
+      }
+    }
+  } else {
+    const { error: deleteFuelError } = await supabase
+      .from("fuel_events")
+      .delete()
+      .eq("daily_trip_id", dailyTripId);
+    if (deleteFuelError) {
+      throw new Error(`Failed to clear fuel events: ${deleteFuelError.message}`);
     }
   }
 

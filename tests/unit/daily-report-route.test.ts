@@ -58,6 +58,11 @@ function ingestionRun(status: "running" | "completed" | "partial" | "failed") {
     heartbeat_at: "2026-06-15T04:01:00.000Z",
     completed_at:
       status === "running" ? null : "2026-06-15T04:02:00.000Z",
+    is_final: status === "completed",
+    last_successful_at:
+      status === "running" ? null : "2026-06-15T04:02:00.000Z",
+    finalized_at:
+      status === "completed" ? "2026-06-15T04:02:00.000Z" : null,
     error_summary: [],
     metadata:
       status === "running"

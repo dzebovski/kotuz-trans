@@ -6,7 +6,7 @@ normalization into Supabase, fuel anomaly detection, and Telegram reporting.
 ## Architecture
 
 - **Next.js App Router** on Node.js runtime
-- **Single daily job** (`daily-fleet-report`) with idempotent Supabase writes
+- **Daily finalization + background ingestion queue** with idempotent Supabase writes
 - **Wialon Remote API Reports** per vehicle (fuel + trips)
 - **One `sid` per worker**; reports run sequentially inside each worker
 - **Bounded concurrency** (default 4 workers)
@@ -63,6 +63,8 @@ Apply SQL migrations in Supabase SQL Editor:
 
 1. `supabase/migrations/001_initial_schema.sql` (if not already applied)
 2. `supabase/migrations/002_trip_segments_metrics.sql`
+3. `supabase/migrations/003_daily_trips_fleet_metrics.sql`
+4. `supabase/migrations/004_date_range_ingestion_queue.sql`
 
 ## Scripts
 
@@ -97,15 +99,17 @@ openssl rand -hex 32
 ```
 
 3. Add environment variables from `.env.example` in Vercel.
-4. Deploy. `vercel.json` defines one cron at `0 4 * * *` UTC.
-5. Cron calls `GET /api/cron/daily-fleet-report` with header:
+4. Apply all SQL files from `supabase/migrations`, including
+   `004_date_range_ingestion_queue.sql`.
+5. Deploy. `vercel.json` defines only daily finalization at `0 4 * * *` UTC.
+6. The cron route uses the header:
 
 ```text
 Authorization: Bearer <CRON_SECRET>
 ```
 
 **Note:** Processing 24 vehicles needs `maxDuration=300` (Vercel Pro).
-Until then, use `npm run ingest:date` locally or from CI.
+Range imports are started manually from the dashboard button.
 
 ## Retry partial/failed dates
 
@@ -113,7 +117,8 @@ Until then, use `npm run ingest:date` locally or from CI.
 npm run ingest:date -- --date=YYYY-MM-DD --force
 ```
 
-`ingestion_runs` lock prevents duplicate concurrent runs. Completed dates are skipped unless `--force`.
+`ingestion_runs` and `ingestion_queue` prevent duplicate concurrent runs.
+Completed final dates are skipped unless `--force`.
 
 ## Current limitations
 

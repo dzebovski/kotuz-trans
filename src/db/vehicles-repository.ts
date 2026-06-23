@@ -21,3 +21,18 @@ export async function listActiveVehicles(): Promise<VehicleRecord[]> {
   }
   return (data ?? []) as VehicleRecord[];
 }
+
+export async function listVehiclesByIds(ids: string[]): Promise<VehicleRecord[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  const { data, error } = await getSupabaseAdmin()
+    .from("vehicles")
+    .select("id,wialon_unit_id,display_name,tractor_number,trailer_number,is_active")
+    .in("id", ids)
+    .order("wialon_unit_id");
+  if (error) {
+    throw new Error(`Failed to load vehicles by id: ${error.message}`);
+  }
+  return (data ?? []) as VehicleRecord[];
+}

@@ -9,16 +9,25 @@ vi.mock("@/config/env", () => ({
 
 vi.mock("@/db/ingestion-runs-repository", () => ({
   acquireIngestionLock: vi.fn(),
+  ensureIngestionVehicleSnapshot: vi.fn(),
   finalizeIngestionRun: vi.fn(),
+  getIngestionVehicleCounts: vi.fn(),
+  markIngestionVehicleResult: vi.fn(),
+  markIngestionVehiclesRunning: vi.fn(),
   updateIngestionProgress: vi.fn(),
 }));
 
 vi.mock("@/db/vehicles-repository", () => ({
   listActiveVehicles: vi.fn(),
+  listVehiclesByIds: vi.fn(),
 }));
 
 vi.mock("@/jobs/process-vehicle", () => ({
   processVehicle: vi.fn(),
+}));
+
+vi.mock("@/jobs/recalculate-derived-metrics", () => ({
+  recalculateVehicleDerivedMetricsAfterDate: vi.fn(),
 }));
 
 vi.mock("@/telegram/client", () => ({
@@ -27,11 +36,16 @@ vi.mock("@/telegram/client", () => ({
 
 import {
   acquireIngestionLock,
+  ensureIngestionVehicleSnapshot,
   finalizeIngestionRun,
+  getIngestionVehicleCounts,
+  markIngestionVehicleResult,
+  markIngestionVehiclesRunning,
   updateIngestionProgress,
 } from "@/db/ingestion-runs-repository";
 import {
   listActiveVehicles,
+  listVehiclesByIds,
   type VehicleRecord,
 } from "@/db/vehicles-repository";
 import { processVehicle } from "@/jobs/process-vehicle";
@@ -93,6 +107,7 @@ describe("daily fleet report progress", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listActiveVehicles).mockResolvedValue(vehicles);
+    vi.mocked(listVehiclesByIds).mockResolvedValue(vehicles);
     vi.mocked(acquireIngestionLock).mockResolvedValue({
       action: "start",
       run: {
@@ -106,9 +121,29 @@ describe("daily fleet report progress", () => {
         started_at: "2026-06-15T04:00:00.000Z",
         heartbeat_at: "2026-06-15T04:00:00.000Z",
         completed_at: null,
+        is_final: false,
+        last_successful_at: null,
+        finalized_at: null,
         error_summary: [],
         metadata: {},
       },
+    });
+    vi.mocked(ensureIngestionVehicleSnapshot).mockResolvedValue(
+      vehicles.map((vehicle) => ({
+        run_id: "run-1",
+        vehicle_id: vehicle.id,
+        status: "pending",
+        attempts: 0,
+        last_error: null,
+        started_at: null,
+        completed_at: null,
+      })),
+    );
+    vi.mocked(getIngestionVehicleCounts).mockResolvedValue({
+      expected: 3,
+      successful: 2,
+      failed: 1,
+      pending: 0,
     });
     vi.mocked(processVehicle).mockImplementation(async ({ vehicle }) => {
       if (vehicle.wialon_unit_id === 102) {
@@ -179,5 +214,7 @@ describe("daily fleet report progress", () => {
         failedVehicles: 1,
       }),
     );
+    expect(markIngestionVehiclesRunning).toHaveBeenCalledTimes(2);
+    expect(markIngestionVehicleResult).toHaveBeenCalledTimes(3);
   });
 });

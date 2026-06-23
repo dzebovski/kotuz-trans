@@ -1,7 +1,5 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CalendarDays,
@@ -10,19 +8,91 @@ import {
   ChevronRight,
   Clock3,
   Database,
-  Fuel,
   Gauge,
-  LayoutDashboard,
   ListTree,
   LogOut,
   Moon,
   RefreshCw,
-  Route,
   Search,
   Sun,
   Truck,
 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+
+type CoverageState =
+  | "ready"
+  | "provisional"
+  | "missing"
+  | "queued"
+  | "running"
+  | "partial"
+  | "failed";
+
+type CoverageDay = {
+  date: string;
+  state: CoverageState;
+  ready: boolean;
+  isToday: boolean;
+  successfulVehicles: number;
+  failedVehicles: number;
+  expectedVehicles: number;
+  queueAttempts: number;
+  lastError: string | null;
+  updatedAt: string | null;
+};
+
+type RangeDay = {
+  id: string;
+  reportDate: string;
+  mileageKm: number;
+  fuelConsumedL: number | null;
+  averageFuelConsumptionLPer100Km: number | null;
+  rolling1000KmConsumptionLPer100Km: number | null;
+  movementDurationSeconds: number | null;
+  parkingCount: number;
+  parkingDurationSeconds: number | null;
+  maxSpeedKmh: number | null;
+  anomalyStatus: string;
+  routeKey: string | null;
+};
+
+type RangeVehicle = {
+  vehicle: {
+    id: string;
+    displayName: string;
+    tractorNumber: string;
+    wialonUnitId: number;
+  };
+  mileageKm: number;
+  fuelConsumedL: number;
+  consumptionLPer100Km: number | null;
+  rolling1000KmConsumptionLPer100Km: number | null;
+  movementDurationSeconds: number;
+  parkingCount: number;
+  parkingDurationSeconds: number;
+  maxSpeedKmh: number | null;
+  anomalyStatus: string;
+  anomalyDays: number;
+  days: RangeDay[];
+};
+
+type RangeResponse = {
+  range: { from: string; to: string; today: string };
+  ready: boolean;
+  coverage: CoverageDay[];
+  summary: {
+    vehicleCount: number;
+    dateCount: number;
+    totalMileageKm: number;
+    totalFuelL: number;
+    totalMovementSeconds: number;
+    vehiclesOverSpeedLimit: number;
+    anomalyVehicles: number;
+  } | null;
+  vehicles: RangeVehicle[];
+};
 
 type TripSegment = {
   id: string;
@@ -38,201 +108,28 @@ type TripSegment = {
   is_local_maneuver: boolean;
 };
 
-type InferredPause = {
-  kind: "inferred";
-  startedAt: string;
-  endedAt: string;
-  durationSeconds: number;
-};
-
-type DailyTrip = {
-  id: string;
-  mileage_km: number;
-  fuel_consumed_l: number | null;
-  average_fuel_consumption_l_per_100km: number | null;
-  route_key: string | null;
-  anomaly_status: string;
-  movement_duration_seconds: number | null;
-  stop_count: number;
-  parking_duration_seconds: number | null;
-  parking_count_from_trips: number;
-  max_speed_kmh: number | null;
-  average_speed_kmh: number | null;
-  starting_fuel_l: number | null;
-  ending_fuel_l: number | null;
-  rolling_1000km_consumption_l_per_100km: number | null;
-  speedLimitExceeded: boolean;
-  vehicle: {
-    display_name: string;
-    wialon_unit_id: number;
-  };
+type DetailsResponse = {
   segments: TripSegment[];
-  derivedPauses: InferredPause[];
+  derivedPauses: Array<{
+    kind: "inferred";
+    startedAt: string;
+    endedAt: string;
+    durationSeconds: number;
+  }>;
 };
 
-type ReportResponse = {
-  summary: {
-    reportDate: string;
-    vehicleCount: number;
-    totalMileageKm: number;
-    totalFuelL: number;
-    totalMovementSeconds: number;
-    totalParkingCount: number;
-    totalParkingSeconds: number;
-    vehiclesOverSpeedLimit: number;
-    averageRollingConsumptionLPer100Km: number | null;
-    withRoute: number;
-    withSegments: number;
-  };
-  trips: DailyTrip[];
-  ingestion: {
-    status: "running" | "completed" | "partial" | "failed" | null;
-    successfulVehicles: number;
-    failedVehicles: number;
-    processedVehicles: number;
-    expectedVehicles: number;
-    startedAt: string | null;
-    heartbeatAt: string | null;
-    completedAt: string | null;
-    phase: "starting" | "processing" | "finalizing" | null;
-    currentVehicles: Array<{
-      wialonUnitId: number;
-      displayName: string;
-    }>;
-    hasData: boolean;
-  };
-};
-
-type IngestionResponse = {
+type RunRangeResponse = {
   ok: boolean;
-  status: "completed" | "partial" | "failed" | "skipped";
-  reportDate: string;
-  reason?: string;
-  processed: number;
-  expected: number;
+  status: "completed" | "partial" | "failed" | "skipped" | "idle";
+  reportDate?: string;
+  reason?: string | null;
 };
 
 type ThemeMode = "light" | "dark";
 
-const THEME_STORAGE_KEY = "fleet-dashboard-theme";
 const BUSINESS_TIMEZONE = "Europe/Kyiv";
-const INGESTION_POLL_INTERVAL_MS = 2_000;
-
-const navItems = [
-  { label: "Dashboard", href: "#overview", icon: LayoutDashboard },
-  { label: "Vehicles", href: "#vehicles", icon: Truck },
-  { label: "Trips", href: "#trips", icon: Route },
-  { label: "Alerts", href: "#alerts", icon: AlertTriangle },
-];
-
-function formatNum(value: number | null, suffix = ""): string {
-  if (value == null || Number.isNaN(value)) {
-    return "-";
-  }
-  return `${value.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}${suffix}`;
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds == null || seconds <= 0) {
-    return "-";
-  }
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours} год ${minutes} хв`;
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString("uk-UA", {
-    timeZone: "Europe/Kyiv",
-    hour: "2-digit",
-    minute: "2-digit",
-    day: "2-digit",
-    month: "2-digit",
-  });
-}
-
-function formatDateLabel(date: string): string {
-  const [year, month, day] = date.split("-");
-  return `${day}.${month}.${year}`;
-}
-
-function formatElapsed(startedAt: string | null, now: number): string {
-  if (!startedAt) {
-    return "щойно";
-  }
-  const seconds = Math.max(
-    0,
-    Math.floor((now - new Date(startedAt).getTime()) / 1000),
-  );
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  return minutes > 0
-    ? `${minutes} хв ${remainingSeconds} с`
-    : `${remainingSeconds} с`;
-}
-
-function isAnomaly(status: string): boolean {
-  return status === "warning" || status === "critical";
-}
-
-function isThemeMode(value: string | null): value is ThemeMode {
-  return value === "light" || value === "dark";
-}
-
-function countryCodeToFlag(code: string): string {
-  const normalized = code.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(normalized)) {
-    return "";
-  }
-  return Array.from(normalized)
-    .map((char) => String.fromCodePoint(char.charCodeAt(0) + 127397))
-    .join("");
-}
-
-function routeFlags(routeKey: string | null): string {
-  if (!routeKey) {
-    return "-";
-  }
-  const codes = Array.from(routeKey.matchAll(/\b[A-Z]{2}(?=:)/g), (match) => match[0]);
-  const routeCodes =
-    codes.length === 1 ? [codes[0], codes[0]] : [codes[0], codes[codes.length - 1]];
-  const flags = routeCodes.map(countryCodeToFlag).filter(Boolean);
-  return flags.length > 0 ? flags.join(" → ") : "-";
-}
-
-function describeNonJsonResponse(status: number, body: string): string {
-  const snippet = body
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 220);
-
-  return snippet
-    ? `API повернув HTML замість JSON (${status}): ${snippet}`
-    : `API повернув HTML замість JSON (${status})`;
-}
-
-async function readJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  let json: (T & { error?: string }) | null = null;
-
-  try {
-    json = JSON.parse(text) as T & { error?: string };
-  } catch {
-    if (!response.ok) {
-      throw new Error(describeNonJsonResponse(response.status, text));
-    }
-    throw new Error("API повернув невалідний JSON");
-  }
-
-  if (!response.ok) {
-    throw new Error(json.error ?? `Failed to load report (${response.status})`);
-  }
-
-  return json;
-}
+const THEME_STORAGE_KEY = "fleet-dashboard-theme";
+const POLL_INTERVAL_MS = 5_000;
 
 function getKyivDate(offsetDays = 0): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -252,204 +149,264 @@ function getKyivDate(offsetDays = 0): string {
   return date.toISOString().slice(0, 10);
 }
 
-function ingestionLabel(data: ReportResponse | null): string {
-  const ingestion = data?.ingestion;
-  if (!ingestion?.status) {
-    return "Дані ще не завантажувалися";
-  }
-  if (ingestion.status === "running") {
-    return "Завантаження виконується";
-  }
-  if (ingestion.status === "failed") {
-    return "Останнє завантаження не вдалося";
-  }
+function dateDaysAgo(days: number, end = getKyivDate(-1)): string {
+  const date = new Date(`${end}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
+}
 
-  const counts = `${ingestion.successfulVehicles}/${ingestion.expectedVehicles}`;
-  return ingestion.status === "partial"
-    ? `Завантажено частково: ${counts}`
-    : `Завантажено: ${counts}`;
+function inclusiveDateCount(from: string, to: string): number {
+  const start = new Date(`${from}T00:00:00Z`).getTime();
+  const end = new Date(`${to}T00:00:00Z`).getTime();
+  return Math.max(0, Math.round((end - start) / 86_400_000) + 1);
+}
+
+function formatNum(value: number | null, suffix = ""): string {
+  if (value == null || Number.isNaN(value)) {
+    return "—";
+  }
+  return `${value.toLocaleString("uk-UA", { maximumFractionDigits: 2 })}${suffix}`;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null || seconds <= 0) {
+    return "—";
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours} год ${minutes} хв`;
+}
+
+function formatDate(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleString("uk-UA", {
+    timeZone: BUSINESS_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "light" || value === "dark";
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  let json: (T & { error?: string }) | null = null;
+  try {
+    json = JSON.parse(text) as T & { error?: string };
+  } catch {
+    throw new Error(`API повернув невалідну відповідь (${response.status})`);
+  }
+  if (!response.ok) {
+    throw new Error(json.error ?? `Запит не виконано (${response.status})`);
+  }
+  return json;
+}
+
+function coverageLabel(state: CoverageState): string {
+  const labels: Record<CoverageState, string> = {
+    ready: "готово",
+    provisional: "попередні",
+    missing: "немає даних",
+    queued: "у черзі",
+    running: "завантаження",
+    partial: "частково",
+    failed: "помилка",
+  };
+  return labels[state];
 }
 
 export default function HomePage() {
   const router = useRouter();
-  const [date, setDate] = useState(() => getKyivDate(-1));
-  const [data, setData] = useState<ReportResponse | null>(null);
+  const yesterday = getKyivDate(-1);
+  const [draftFrom, setDraftFrom] = useState(yesterday);
+  const [draftTo, setDraftTo] = useState(yesterday);
+  const [from, setFrom] = useState(yesterday);
+  const [to, setTo] = useState(yesterday);
+  const [data, setData] = useState<RangeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [mutating, setMutating] = useState(false);
+  const [rangeRunStatus, setRangeRunStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [ingesting, setIngesting] = useState(false);
-  const [progressClock, setProgressClock] = useState(() => Date.now());
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null);
   const [vehicleQuery, setVehicleQuery] = useState("");
   const [theme, setTheme] = useState<ThemeMode>("dark");
 
-  const load = useCallback(async (options: { silent?: boolean } = {}) => {
-    if (!options.silent) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const response = await fetch(`/api/reports/daily?date=${date}`);
-      const json = await readJsonResponse<ReportResponse>(response);
-      setData(json);
-      return json;
-    } catch (loadError) {
-      if (!options.silent) {
-        setData(null);
+  const load = useCallback(
+    async (silent = false): Promise<RangeResponse | null> => {
+      if (!silent) {
+        setLoading(true);
+        setError(null);
       }
-      setError(
-        loadError instanceof Error ? loadError.message : "Failed to load report",
-      );
-      return null;
-    } finally {
-      if (!options.silent) {
-        setLoading(false);
+      try {
+        const response = await fetch(
+          `/api/reports/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        );
+        const json = await readJsonResponse<RangeResponse>(response);
+        setData(json);
+        return json;
+      } catch (loadError) {
+        if (!silent) {
+          setData(null);
+        }
+        setError(
+          loadError instanceof Error ? loadError.message : "Не вдалося завантажити звіт",
+        );
+        return null;
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
       }
-    }
-  }, [date]);
+    },
+    [from, to],
+  );
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [from, load, to]);
 
   useEffect(() => {
-    if (!ingesting && data?.ingestion.status !== "running") {
+    if (!data || data.ready) {
       return;
     }
-
-    void load({ silent: true });
-    const intervalId = window.setInterval(() => {
-      void load({ silent: true });
-    }, INGESTION_POLL_INTERVAL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [data?.ingestion.status, ingesting, load]);
+    const interval = window.setInterval(() => {
+      void load(true);
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [data, load]);
 
   useEffect(() => {
-    if (!ingesting && data?.ingestion.status !== "running") {
-      return;
-    }
-
-    setProgressClock(Date.now());
-    const intervalId = window.setInterval(() => {
-      setProgressClock(Date.now());
-    }, 1_000);
-
-    return () => window.clearInterval(intervalId);
-  }, [data?.ingestion.status, ingesting]);
-
-  useEffect(() => {
-    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-    const preferredTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const preferred = window.matchMedia("(prefers-color-scheme: dark)").matches
       ? "dark"
       : "light";
-    const nextTheme = isThemeMode(storedTheme) ? storedTheme : preferredTheme;
-
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
+    const next = isThemeMode(stored) ? stored : preferred;
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
   }, []);
 
-  function handleThemeToggle() {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  function applyRange(): void {
+    setError(null);
+    setData(null);
+    setRangeRunStatus(null);
+    setExpandedVehicleId(null);
+    setFrom(draftFrom);
+    setTo(draftTo);
   }
 
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+  function applyPreset(days: 1 | 7 | 30 | 90): void {
+    const end = getKyivDate(-1);
+    const start = dateDaysAgo(days - 1, end);
+    setDraftFrom(start);
+    setDraftTo(end);
+    setFrom(start);
+    setTo(end);
+    setData(null);
+    setRangeRunStatus(null);
+    setExpandedVehicleId(null);
+  }
+
+  async function runRangeImport(
+    mode: "missing" | "force",
+    retryFailed = false,
+  ): Promise<void> {
+    setMutating(true);
+    setError(null);
+    setRangeRunStatus("Запускаю імпорт по вибраному періоду…");
+
+    let nextMode = mode;
+    let nextRetryFailed = retryFailed;
+    try {
+      for (let step = 0; step < 100; step += 1) {
+        setRangeRunStatus("Імпорт виконується. Один запит обробляє одну дату.");
+        const response = await fetch("/api/reports/range/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            from,
+            to,
+            mode: nextMode,
+            retryFailed: nextRetryFailed,
+          }),
+        });
+        const result = await readJsonResponse<RunRangeResponse>(response);
+        const report = await load(true);
+
+        if (result.reportDate) {
+          setRangeRunStatus(`Оброблено дату ${formatDate(result.reportDate)}.`);
+        }
+        if (report?.ready || result.status === "idle") {
+          break;
+        }
+        if (result.status !== "completed" && result.status !== "skipped") {
+          break;
+        }
+
+        nextMode = "missing";
+        nextRetryFailed = false;
+      }
+    } catch (runError) {
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : "Не вдалося запустити імпорт",
+      );
+    } finally {
+      setMutating(false);
+      setRangeRunStatus(null);
+      await load(true);
+    }
+  }
+
+  async function runMutation(action: () => Promise<void>): Promise<void> {
+    setMutating(true);
+    setError(null);
+    try {
+      await action();
+      await load(true);
+    } catch (mutationError) {
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Не вдалося виконати дію",
+      );
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function handleSignOut(): Promise<void> {
+    await createClient().auth.signOut();
     router.replace("/login");
     router.refresh();
   }
 
-  function handleDateChange(nextDate: string) {
-    setDate(nextDate);
-    setData(null);
-    setError(null);
-    setExpandedId(null);
+  function toggleTheme(): void {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    window.localStorage.setItem(THEME_STORAGE_KEY, next);
   }
 
-  async function handleIngest() {
-    const force = data?.ingestion.hasData ?? false;
-    setIngesting(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/reports/daily", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date, force }),
-      });
-      const result = await readJsonResponse<IngestionResponse>(response);
-
-      if (result.status === "failed") {
-        throw new Error("Не вдалося завантажити дані за вибрану дату");
-      }
-
-      await load({ silent: true });
-    } catch (ingestError) {
-      const latest = await load({ silent: true });
-      const processStillRunning = latest?.ingestion.status === "running";
-      setError(
-        processStillRunning
-          ? "Зв’язок із запитом перервався, але завантаження продовжується. Статус оновлюється автоматично."
-          : ingestError instanceof Error
-            ? ingestError.message
-            : "Не вдалося завантажити дані",
-      );
-    } finally {
-      setIngesting(false);
-    }
-  }
-
-  const reportDate = data?.summary.reportDate ?? date;
-  const normalizedVehicleQuery = vehicleQuery.trim().toLowerCase();
-  const shouldFilterVehicles = normalizedVehicleQuery.length >= 2;
-  const filteredTrips =
-    data?.trips.filter((trip) =>
-      trip.vehicle.display_name.toLowerCase().includes(normalizedVehicleQuery),
+  const normalizedQuery = vehicleQuery.trim().toLowerCase();
+  const vehicles =
+    data?.vehicles.filter((vehicle) =>
+      vehicle.vehicle.displayName.toLowerCase().includes(normalizedQuery),
     ) ?? [];
-  const visibleTrips = shouldFilterVehicles ? filteredTrips : (data?.trips ?? []);
-  const tableHint = shouldFilterVehicles
-    ? `Знайдено ${visibleTrips.length} з ${data?.trips.length ?? 0}`
-    : `${data?.trips.length ?? 0} рядків`;
-  const ingestionRunning = data?.ingestion.status === "running";
-  const actionBusy = ingesting || ingestionRunning;
-  const checkingDate = loading && !data;
-  const actionDisabled = actionBusy || checkingDate;
-  const actionLabel = actionBusy
-    ? "Завантаження…"
-    : checkingDate
-      ? "Перевірка…"
-      : data?.ingestion.hasData
-        ? "Перезавантажити дані"
-        : "Завантажити дані";
-  const statusTone =
-    data?.ingestion.status === "failed"
-      ? "danger"
-      : data?.ingestion.status === "partial"
-        ? "warning"
-        : data?.ingestion.status === "completed"
-          ? "success"
-          : undefined;
-  const serverProgress = ingestionRunning ? data?.ingestion : null;
-  const progressExpected =
-    serverProgress?.expectedVehicles ?? data?.ingestion.expectedVehicles ?? 0;
-  const progressProcessed = serverProgress?.processedVehicles ?? 0;
-  const progressSuccessful = serverProgress?.successfulVehicles ?? 0;
-  const progressFailed = serverProgress?.failedVehicles ?? 0;
-  const progressRemaining = Math.max(
-    0,
-    progressExpected - progressProcessed,
-  );
-  const progressPercent =
-    progressExpected > 0
-      ? Math.min(100, Math.round((progressProcessed / progressExpected) * 100))
-      : 0;
-  const progressPhase = serverProgress?.phase ?? "starting";
-  const currentVehicles = serverProgress?.currentVehicles ?? [];
-  const progressStartedAt = serverProgress?.startedAt ?? null;
+  const readyDates = data?.coverage.filter((day) => day.ready).length ?? 0;
+  const todayCoverage = data?.coverage.find((day) => day.isToday);
+  const selectedPresetDays = (() => {
+    const days = inclusiveDateCount(from, to);
+    return to === getKyivDate(-1) && [1, 7, 30, 90].includes(days) ? days : null;
+  })();
 
   return (
     <div className="app-shell">
@@ -457,21 +414,6 @@ export default function HomePage() {
         <div className="brand-mark" title="Fleet Analytics">
           <Database size={18} />
         </div>
-        <nav className="side-nav">
-          {navItems.map((item, index) => {
-            const Icon = item.icon;
-            return (
-              <a
-                key={item.label}
-                className={`side-nav__item${index === 0 ? " side-nav__item--active" : ""}`}
-                href={item.href}
-                title={item.label}
-              >
-                <Icon size={18} />
-              </a>
-            );
-          })}
-        </nav>
       </aside>
 
       <main className="page">
@@ -482,19 +424,11 @@ export default function HomePage() {
             </div>
             <div>
               <h1>Fleet Analytics</h1>
-              <p className="mono">daily_trips / trip_segments</p>
+              <p className="mono">range / vehicle / day / trip</p>
             </div>
           </div>
-
           <div className="topbar__actions">
-            <button
-              className="button button--ghost theme-toggle"
-              type="button"
-              onClick={handleThemeToggle}
-              aria-label={
-                theme === "dark" ? "Перемкнути на світлу тему" : "Перемкнути на темну тему"
-              }
-            >
+            <button className="button button--ghost" type="button" onClick={toggleTheme}>
               {theme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
               {theme === "dark" ? "Темна" : "Світла"}
             </button>
@@ -506,360 +440,418 @@ export default function HomePage() {
         </header>
 
         <div className="content">
-          <section id="overview" className="hero-strip">
+          <section className="hero-strip">
             <div>
-              <p className="eyebrow">Operations console</p>
-              <h2>Подобовий звіт по машинах</h2>
+              <p className="eyebrow">Fleet operations console</p>
+              <h2>Звіт за період</h2>
               <p>
-                Щільний перегляд флоту за дату{" "}
-                <span className="mono">{reportDate}</span>: паливо, рух,
-                стоянки, rolling 1000 км і контроль швидкості.
+                Агреговані показники по машинах за{" "}
+                <span className="mono">{formatDate(from)} — {formatDate(to)}</span>.
+                Дані відображаються після завершення всіх дат.
               </p>
             </div>
-            <div className="chip-row" id="alerts">
-              <Badge tone={data?.summary.vehiclesOverSpeedLimit ? "danger" : "success"}>
-                <Gauge size={13} />
-                {data?.summary.vehiclesOverSpeedLimit ?? 0} авто &gt;86
+            <div className="chip-row">
+              <Badge tone={data?.ready ? "success" : "warning"}>
+                {data?.ready ? <CheckCircle2 size={13} /> : <Clock3 size={13} />}
+                {data?.ready ? "період готовий" : `${readyDates}/${data?.coverage.length ?? 0} дат`}
               </Badge>
-              <Badge tone={data?.summary.withSegments ? "success" : "warning"}>
-                <ListTree size={13} />
-                {data?.summary.withSegments ?? 0} з рейсами
+              <Badge>
+                <Truck size={13} />
+                {data?.summary?.vehicleCount ?? 0} авто
               </Badge>
             </div>
           </section>
 
           {error ? <div className="error-banner">{error}</div> : null}
 
-          <section className="panel toolbar">
-            <div className="filter-row">
-              <label className="date-field">
-                <CalendarDays size={15} />
-                <input
-                  className="input mono"
-                  type="date"
-                  value={date}
-                  max={getKyivDate()}
-                  disabled={actionBusy}
-                  onChange={(event) => handleDateChange(event.target.value)}
-                />
-              </label>
-              <button
-                className="button button--primary ingest-button"
-                type="button"
-                onClick={() => void handleIngest()}
-                disabled={actionDisabled}
-              >
-                <RefreshCw
-                  className={actionBusy ? "spin" : undefined}
-                  size={16}
-                />
-                {actionLabel}
-              </button>
-              {!checkingDate ? (
-                <Badge tone={statusTone}>{ingestionLabel(data)}</Badge>
-              ) : null}
+          <section className="panel range-toolbar">
+            <div className="range-block">
+              <span className="range-block__label">Швидкий вибір</span>
+              <p className="range-block__hint">
+                Натиснув пресет — період одразу обирається. Завантаження
+                стартує окремою кнопкою нижче.
+              </p>
+              <div className="preset-row" aria-label="Швидкий вибір періоду">
+                {([1, 7, 30, 90] as const).map((days) => (
+                  <button
+                    className={`button button--ghost${
+                      selectedPresetDays === days ? " button--selected" : ""
+                    }`}
+                    type="button"
+                    key={days}
+                    onClick={() => applyPreset(days)}
+                    disabled={mutating}
+                  >
+                    {days === 1 ? "Учора" : `${days} днів`}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="range-block range-block--custom">
+              <span className="range-block__label">Свій період</span>
+              <p className="range-block__hint">
+                Якщо міняєш дати вручну — натисни «Обрати період», потім
+                «Запустити завантаження».
+              </p>
+              <div className="range-fields">
+                <label className="field">
+                  <span>Від</span>
+                  <input
+                    className="input mono"
+                    type="date"
+                    value={draftFrom}
+                    max={draftTo}
+                    onChange={(event) => setDraftFrom(event.target.value)}
+                  />
+                </label>
+                <span className="range-separator">→</span>
+                <label className="field">
+                  <span>До</span>
+                  <input
+                    className="input mono"
+                    type="date"
+                    value={draftTo}
+                    min={draftFrom}
+                    max={getKyivDate()}
+                    onChange={(event) => setDraftTo(event.target.value)}
+                  />
+                </label>
+                <button
+                  className="button button--primary"
+                  type="button"
+                  onClick={applyRange}
+                  disabled={mutating || !draftFrom || !draftTo}
+                >
+                  <CalendarDays size={16} />
+                  Обрати період
+                </button>
+              </div>
+              <div className="range-actions">
+                <button
+                  className="button button--primary"
+                  type="button"
+                  disabled={mutating}
+                  onClick={() => void runRangeImport("missing")}
+                >
+                  <RefreshCw className={mutating ? "spin" : undefined} size={16} />
+                  Запустити завантаження
+                </button>
+                <button
+                  className="button button--ghost"
+                  type="button"
+                  disabled={mutating}
+                  onClick={() => void runRangeImport("force")}
+                >
+                  <RefreshCw size={16} />
+                  Повністю перезавантажити
+                </button>
+                {todayCoverage ? (
+                  <button
+                    className="button button--ghost"
+                    type="button"
+                    disabled={mutating}
+                    onClick={() =>
+                      void runMutation(async () => {
+                        const response = await fetch("/api/reports/range/today", {
+                          method: "POST",
+                        });
+                        await readJsonResponse(response);
+                      })
+                    }
+                  >
+                    <RefreshCw size={16} />
+                    Оновити сьогодні
+                  </button>
+                ) : null}
+              </div>
             </div>
           </section>
 
-          {actionBusy ? (
-            <IngestionProgress
-              date={date}
-              phase={progressPhase}
-              processed={progressProcessed}
-              expected={progressExpected}
-              successful={progressSuccessful}
-              failed={progressFailed}
-              remaining={progressRemaining}
-              percent={progressPercent}
-              currentVehicles={currentVehicles}
-              elapsed={formatElapsed(progressStartedAt, progressClock)}
+          {!data?.ready ? (
+            <CoveragePanel
+              coverage={data?.coverage ?? []}
+              loading={loading}
+              mutating={mutating}
+              runStatus={rangeRunStatus}
+              onRetry={() =>
+                void runRangeImport("missing", true)
+              }
             />
-          ) : null}
+          ) : (
+            <>
+              {todayCoverage?.state === "provisional" ? (
+                <div className="provisional-banner">
+                  <AlertTriangle size={16} />
+                  Дані за сьогодні попередні й можуть змінитися до завершення доби.
+                </div>
+              ) : null}
 
-          <section className="panel vehicle-search-row" aria-label="Пошук автомобіля">
-            <label className="search-field">
-              <Search size={15} />
-              <input
-                className="input"
-                type="search"
-                placeholder="Пошук по номеру машини..."
-                value={vehicleQuery}
-                onChange={(event) => setVehicleQuery(event.target.value)}
-              />
-            </label>
-            <p className="muted search-hint" aria-live="polite">
-              {vehicleQuery.trim().length > 0 && vehicleQuery.trim().length < 2
-                ? "Введіть мінімум 2 символи"
-                : loading
-                  ? "Завантаження даних..."
-                  : tableHint}
-            </p>
-          </section>
+              <section className="range-summary-grid">
+                <SummaryMetric label="Пробіг" value={formatNum(data.summary?.totalMileageKm ?? 0, " km")} />
+                <SummaryMetric label="Паливо" value={formatNum(data.summary?.totalFuelL ?? 0, " l")} />
+                <SummaryMetric label="Час руху" value={formatDuration(data.summary?.totalMovementSeconds ?? 0)} />
+                <SummaryMetric label="Перевищення" value={`${data.summary?.vehiclesOverSpeedLimit ?? 0} авто`} tone="danger" />
+                <SummaryMetric label="Аномалії" value={`${data.summary?.anomalyVehicles ?? 0} авто`} tone="warning" />
+              </section>
 
-          <section id="vehicles" className="panel table-shell">
-            <div className="table-scroll">
-              <table className="data-table">
-                <colgroup>
-                  <col className="col-vehicle" />
-                  <col className="col-route" />
-                  <col className="col-number" />
-                  <col className="col-number" />
-                  <col className="col-number-wide" />
-                  <col className="col-number-wide" />
-                  <col className="col-number-wide" />
-                  <col className="col-action" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Авто</th>
-                    <th>Маршрут</th>
-                    <th className="data-table__number">Пробіг</th>
-                    <th className="data-table__number">Витрачено</th>
-                    <th className="data-table__number">Сер. розхід</th>
-                    <th className="data-table__number">1000 км</th>
-                    <th className="data-table__number">Час руху</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {!data || visibleTrips.length === 0 ? (
-                    <tr>
-                      <td colSpan={8}>
-                        <div className="empty-state empty-state--action">
-                          <p>
-                            {loading
-                              ? "Перевіряємо дані за вибрану дату…"
-                              : shouldFilterVehicles
-                                ? "Нічого не знайдено за цим номером"
-                                : "За вибрану дату дані ще не завантажені."}
-                          </p>
-                          {!loading && !shouldFilterVehicles ? (
-                            <button
-                              className="button button--primary"
-                              type="button"
-                              onClick={() => void handleIngest()}
-                              disabled={actionDisabled}
-                            >
-                              <RefreshCw
-                                className={actionBusy ? "spin" : undefined}
-                                size={16}
-                              />
-                              {actionLabel}
-                            </button>
+              <section className="panel vehicle-search-row" aria-label="Пошук автомобіля">
+                <label className="search-field">
+                  <Search size={15} />
+                  <input
+                    className="input"
+                    type="search"
+                    placeholder="Пошук по номеру машини..."
+                    value={vehicleQuery}
+                    onChange={(event) => setVehicleQuery(event.target.value)}
+                  />
+                </label>
+                <p className="muted search-hint">
+                  {vehicles.length} з {data.vehicles.length} авто
+                </p>
+              </section>
+
+              <section className="panel table-shell">
+                <div className="table-scroll">
+                  <table className="data-table range-table">
+                    <thead>
+                      <tr>
+                        <th>Авто</th>
+                        <th className="data-table__number">Днів</th>
+                        <th className="data-table__number">Пробіг</th>
+                        <th className="data-table__number">Паливо</th>
+                        <th className="data-table__number">Розхід</th>
+                        <th className="data-table__number">1000 км</th>
+                        <th className="data-table__number">Макс.</th>
+                        <th className="data-table__number">Рух</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vehicles.map((vehicle) => (
+                        <Fragment key={vehicle.vehicle.id}>
+                          <RangeVehicleRow
+                            vehicle={vehicle}
+                            expanded={expandedVehicleId === vehicle.vehicle.id}
+                            onToggle={() =>
+                              setExpandedVehicleId((current) =>
+                                current === vehicle.vehicle.id
+                                  ? null
+                                  : vehicle.vehicle.id,
+                              )
+                            }
+                          />
+                          {expandedVehicleId === vehicle.vehicle.id ? (
+                            <RangeVehicleDetails vehicle={vehicle} />
                           ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    visibleTrips.map((trip) => (
-                      <Fragment key={trip.id}>
-                        <VehicleRow
-                          trip={trip}
-                          expanded={expandedId === trip.id}
-                          onToggle={() =>
-                            setExpandedId((current) =>
-                              current === trip.id ? null : trip.id,
-                            )
-                          }
-                        />
-                        {expandedId === trip.id ? <VehicleDetails trip={trip} /> : null}
-                      </Fragment>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </>
+          )}
         </div>
       </main>
     </div>
   );
 }
 
-function IngestionProgress({
-  date,
-  phase,
-  processed,
-  expected,
-  successful,
-  failed,
-  remaining,
-  percent,
-  currentVehicles,
-  elapsed,
+function CoveragePanel({
+  coverage,
+  loading,
+  mutating,
+  runStatus,
+  onRetry,
 }: {
-  date: string;
-  phase: "starting" | "processing" | "finalizing";
-  processed: number;
-  expected: number;
-  successful: number;
-  failed: number;
-  remaining: number;
-  percent: number;
-  currentVehicles: Array<{
-    wialonUnitId: number;
-    displayName: string;
-  }>;
-  elapsed: string;
+  coverage: CoverageDay[];
+  loading: boolean;
+  mutating: boolean;
+  runStatus: string | null;
+  onRetry: () => void;
 }) {
-  const phaseLabel =
-    phase === "finalizing"
-      ? "Завершуємо обробку"
-      : phase === "processing"
-        ? "Отримуємо звіти по машинах"
-        : "Готуємо список машин";
-  const currentLabel =
-    currentVehicles.length > 0
-      ? currentVehicles.map((vehicle) => vehicle.displayName).join(", ")
-      : phase === "finalizing"
-        ? "Усі машини оброблені"
-        : phase === "starting"
-          ? "Формуємо список машин"
-          : "Очікуємо наступну пачку";
+  const ready = coverage.filter((day) => day.ready).length;
+  const failed = coverage.filter((day) => day.state === "failed");
+  const queued = coverage.filter((day) => day.state === "queued").length;
+  const running = coverage.filter((day) => day.state === "running").length;
+  const partial = coverage.filter((day) => day.state === "partial").length;
+  const missing = coverage.filter((day) => day.state === "missing").length;
+  const importActive = mutating || running + partial > 0;
+  const percent = coverage.length > 0 ? Math.round((ready / coverage.length) * 100) : 0;
+  const title = loading
+    ? "Перевіряю, що вже є в БД"
+    : failed.length > 0
+      ? "Є failed-дати — потрібен retry"
+      : importActive
+        ? "Завантаження запущене кнопкою"
+        : queued > 0
+          ? "Дати в черзі — можна запускати"
+          : missing > 0
+            ? "Є дати без snapshot"
+            : "Очікую готовність усіх дат";
+  const description = loading
+    ? "Зараз читаю coverage по вибраному періоду."
+    : failed.length > 0
+      ? "Натисни «Повторити», щоб знову запустити проблемні дати."
+      : importActive
+        ? (runStatus ?? "Нічого не натискай. Імпорт іде, сторінка оновлює статус.")
+        : queued > 0
+          ? "Натисни «Запустити завантаження», щоб обробити дати з черги."
+          : missing > 0
+            ? "Натисни «Запустити завантаження». Система поставить ці дати в чергу і одразу почне імпорт."
+            : "Якщо таблиця ще не показана — дочекайся завершення поточного імпорту або повтори запуск.";
 
   return (
-    <section
-      className="panel ingestion-progress"
-      aria-live="polite"
-      aria-label="Прогрес завантаження даних"
-    >
-      <div className="ingestion-progress__header">
+    <section className="panel coverage-panel" aria-live="polite">
+      <div className="coverage-header">
         <div>
-          <p className="eyebrow">Завантаження активне</p>
-          <h3>Оновлюємо дані за {formatDateLabel(date)}</h3>
-          <p>{phaseLabel}. Таблиця оновлюється автоматично.</p>
+          <p className="eyebrow">Статус завантаження</p>
+          <h3>{title}</h3>
+          <p>{description}</p>
         </div>
-        <div className="ingestion-progress__total mono">
-          <strong>{processed}</strong>
-          <span>з {expected || "—"} машин</span>
+        <div className="coverage-total mono">
+          <strong>{ready}/{coverage.length || "—"}</strong>
+          <span>{percent}% готово</span>
         </div>
       </div>
-
-      <div
-        className="progress-track"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={expected || 1}
-        aria-valuenow={processed}
-        aria-valuetext={`${processed} з ${expected} машин, ${percent}%`}
-      >
-        <span
-          className="progress-track__fill"
-          style={{ width: `${percent}%` }}
-        />
+      <div className="progress-track">
+        <span className="progress-track__fill" style={{ width: `${percent}%` }} />
       </div>
-
-      <div className="ingestion-progress__meta">
-        <div className="current-vehicles">
-          <span className="current-vehicles__pulse" aria-hidden="true" />
+      {!loading && (queued > 0 || missing > 0) && !importActive && failed.length === 0 ? (
+        <div className="coverage-state-card">
+          <Clock3 size={18} />
           <div>
-            <span className="muted">Зараз обробляються</span>
-            <strong>{currentLabel}</strong>
+            <strong>
+              {queued > 0
+                ? `${queued} дат у черзі.`
+                : `${missing} дат ще не поставлені в чергу.`}
+            </strong>
+            <span>
+              Для старту натисни «Запустити завантаження». Це запустить імпорт
+              напряму з кнопки.
+            </span>
           </div>
         </div>
-        <strong className="mono">{percent}%</strong>
+      ) : null}
+      {!loading && importActive ? (
+        <div className="coverage-state-card coverage-state-card--running">
+          <RefreshCw className="spin" size={18} />
+          <div>
+            <strong>Імпорт виконується.</strong>
+            <span>
+              {runStatus ?? `В роботі: ${running + partial} дат. Готово: ${ready}/${coverage.length}.`}
+            </span>
+          </div>
+        </div>
+      ) : null}
+      <div className="coverage-days">
+        {coverage.map((day) => (
+          <div className={`coverage-day coverage-day--${day.state}`} key={day.date}>
+            <span className="mono">{formatDate(day.date)}</span>
+            <Badge
+              tone={
+                day.ready
+                  ? "success"
+                  : day.state === "failed"
+                    ? "danger"
+                    : "warning"
+              }
+            >
+              {coverageLabel(day.state)}
+            </Badge>
+            {day.expectedVehicles > 0 ? (
+              <span className="muted mono">
+                {day.successfulVehicles}/{day.expectedVehicles}
+              </span>
+            ) : null}
+            {day.lastError ? <small title={day.lastError}>{day.lastError}</small> : null}
+          </div>
+        ))}
       </div>
-
-      <div className="ingestion-progress__stats">
-        <span>
-          <CheckCircle2 size={15} />
-          Успішно <strong>{successful}</strong>
-        </span>
-        <span className={failed > 0 ? "progress-stat--danger" : undefined}>
-          <AlertTriangle size={15} />
-          З помилкою <strong>{failed}</strong>
-        </span>
-        <span>
-          <Truck size={15} />
-          Залишилось <strong>{remaining}</strong>
-        </span>
-        <span>
-          <Clock3 size={15} />
-          Триває <strong>{elapsed}</strong>
-        </span>
-      </div>
+      {failed.length > 0 ? (
+        <div className="coverage-retry">
+          <span>
+            <AlertTriangle size={15} />
+            Не завантажено дат: <strong>{failed.length}</strong>
+          </span>
+          <button className="button button--primary" type="button" disabled={mutating} onClick={onRetry}>
+            <RefreshCw className={mutating ? "spin" : undefined} size={16} />
+            Повторити
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function VehicleRow({
-  trip,
+function SummaryMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "danger" | "warning";
+}) {
+  return (
+    <div className={`panel summary-metric${tone ? ` summary-metric--${tone}` : ""}`}>
+      <span>{label}</span>
+      <strong className="mono">{value}</strong>
+    </div>
+  );
+}
+
+function RangeVehicleRow({
+  vehicle,
   expanded,
   onToggle,
 }: {
-  trip: DailyTrip;
+  vehicle: RangeVehicle;
   expanded: boolean;
   onToggle: () => void;
 }) {
   return (
     <tr className="vehicle-card-row">
-      <td colSpan={8}>
+      <td colSpan={9}>
         <div className="vehicle-card">
-          <div className="vehicle-main-grid">
+          <div className="range-vehicle-grid">
             <div className="vehicle-cell">
               <div className="vehicle-name">
                 <Truck size={15} />
-                {trip.vehicle.display_name}
+                {vehicle.vehicle.displayName}
               </div>
-              <div className="vehicle-meta mono">unit {trip.vehicle.wialon_unit_id}</div>
-            </div>
-            <div>
-              <div className="route-flags" title={trip.route_key ?? undefined}>
-                {routeFlags(trip.route_key)}
+              <div className="vehicle-meta mono">
+                unit {vehicle.vehicle.wialonUnitId}
               </div>
             </div>
-            <div className="data-table__number mono">{formatNum(trip.mileage_km)} km</div>
-            <div className="data-table__number mono">
-              {formatNum(trip.fuel_consumed_l, " l")}
-            </div>
-            <div className="data-table__number mono">
-              {formatNum(trip.average_fuel_consumption_l_per_100km, " l/100")}
-            </div>
-            <div className="data-table__number mono">
-              {formatNum(trip.rolling_1000km_consumption_l_per_100km, " l/100")}
-            </div>
-            <div className="data-table__number mono">
-              {formatDuration(trip.movement_duration_seconds)}
-            </div>
+            <div className="data-table__number mono">{vehicle.days.length}</div>
+            <div className="data-table__number mono">{formatNum(vehicle.mileageKm, " km")}</div>
+            <div className="data-table__number mono">{formatNum(vehicle.fuelConsumedL, " l")}</div>
+            <div className="data-table__number mono">{formatNum(vehicle.consumptionLPer100Km, " l/100")}</div>
+            <div className="data-table__number mono">{formatNum(vehicle.rolling1000KmConsumptionLPer100Km, " l/100")}</div>
+            <div className="data-table__number mono">{formatNum(vehicle.maxSpeedKmh, " km/h")}</div>
+            <div className="data-table__number mono">{formatDuration(vehicle.movementDurationSeconds)}</div>
             <div className="data-table__number">
-              <button
-                className="button icon-button"
-                type="button"
-                onClick={onToggle}
-                aria-label={expanded ? "Сховати деталі" : "Показати деталі"}
-              >
+              <button className="button icon-button" type="button" onClick={onToggle}>
                 {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               </button>
             </div>
           </div>
-
           <div className="chip-row vehicle-statuses">
-            {trip.speedLimitExceeded ? (
-              <Badge tone="danger">
-                <AlertTriangle size={13} />
-                &gt;86
-              </Badge>
-            ) : (
-              <Badge tone="success">ok</Badge>
-            )}
-            {isAnomaly(trip.anomaly_status) ? (
-              <Badge tone="warning">{trip.anomaly_status}</Badge>
-            ) : null}
-            {trip.segments.length === 0 ? <Badge tone="warning">no trips</Badge> : null}
-            <Badge>
+            <Badge tone={(vehicle.maxSpeedKmh ?? 0) > 86 ? "danger" : "success"}>
               <Gauge size={13} />
-              max {formatNum(trip.max_speed_kmh, " km/h")}
+              {(vehicle.maxSpeedKmh ?? 0) > 86 ? "перевищення" : "швидкість ok"}
             </Badge>
+            {vehicle.anomalyDays > 0 ? (
+              <Badge tone="warning">
+                <AlertTriangle size={13} />
+                {vehicle.anomalyDays} аномальних днів
+              </Badge>
+            ) : null}
             <Badge>
               <Clock3 size={13} />
-              стоянки {trip.parking_count_from_trips} ·{" "}
-              {formatDuration(trip.parking_duration_seconds)}
+              стоянки {vehicle.parkingCount} · {formatDuration(vehicle.parkingDurationSeconds)}
             </Badge>
-            <Badge>
-              <Fuel size={13} />
-              ДУТ {formatNum(trip.starting_fuel_l)} → {formatNum(trip.ending_fuel_l)} l
-            </Badge>
-            {trip.route_key ? <Badge>{trip.route_key}</Badge> : null}
           </div>
         </div>
       </td>
@@ -867,103 +859,164 @@ function VehicleRow({
   );
 }
 
-function VehicleDetails({ trip }: { trip: DailyTrip }) {
+function RangeVehicleDetails({ vehicle }: { vehicle: RangeVehicle }) {
+  const [expandedDayId, setExpandedDayId] = useState<string | null>(null);
   return (
-    <tr className="details-row" id="trips">
-      <td colSpan={8}>
+    <tr className="details-row">
+      <td colSpan={9}>
         <div className="details-panel">
-          <div className="chip-row">
-            <Badge>
-              <Clock3 size={13} />
-              рух {formatDuration(trip.movement_duration_seconds)}
-            </Badge>
-            <Badge>
-              <Fuel size={13} />
-              паливо {formatNum(trip.fuel_consumed_l, " l")}
-            </Badge>
-            <Badge tone={trip.speedLimitExceeded ? "danger" : "success"}>
-              <Gauge size={13} />
-              max {formatNum(trip.max_speed_kmh, " km/h")}
-            </Badge>
+          <div className="section-title">
+            <h4>Дні в періоді</h4>
+            <Badge>{vehicle.days.length} днів</Badge>
           </div>
-
-          <div className="details-grid">
-            <section className="panel details-panel">
-              <div className="section-title">
-                <h4>Рейси за добу</h4>
-                <Badge>{trip.segments.length} rows</Badge>
-              </div>
-              <div className="table-scroll">
-                {trip.segments.length === 0 ? (
-                  <p className="empty-state">Немає сегментів поїздок у БД</p>
-                ) : (
-                  <table className="mini-table">
-                    <thead>
-                      <tr>
-                        <th>Початок</th>
-                        <th>Кінець</th>
-                        <th>Тривалість</th>
-                        <th>Пробіг</th>
-                        <th>Паливо</th>
-                        <th>Vсер/макс</th>
-                        <th>Маршрут</th>
+          <div className="table-scroll">
+            <table className="mini-table daily-breakdown-table">
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Пробіг</th>
+                  <th>Паливо</th>
+                  <th>Розхід</th>
+                  <th>1000 км</th>
+                  <th>Макс.</th>
+                  <th>Рух</th>
+                  <th>Статус</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {vehicle.days.map((day) => (
+                  <Fragment key={day.id}>
+                    <tr>
+                      <td className="mono">{formatDate(day.reportDate)}</td>
+                      <td className="mono">{formatNum(day.mileageKm, " km")}</td>
+                      <td className="mono">{formatNum(day.fuelConsumedL, " l")}</td>
+                      <td className="mono">{formatNum(day.averageFuelConsumptionLPer100Km, " l/100")}</td>
+                      <td className="mono">{formatNum(day.rolling1000KmConsumptionLPer100Km, " l/100")}</td>
+                      <td className="mono">{formatNum(day.maxSpeedKmh, " km/h")}</td>
+                      <td className="mono">{formatDuration(day.movementDurationSeconds)}</td>
+                      <td>
+                        <Badge
+                          tone={
+                            day.anomalyStatus === "critical"
+                              ? "danger"
+                              : day.anomalyStatus === "warning"
+                                ? "warning"
+                                : "success"
+                          }
+                        >
+                          {day.anomalyStatus}
+                        </Badge>
+                      </td>
+                      <td>
+                        <button
+                          className="button icon-button"
+                          type="button"
+                          onClick={() =>
+                            setExpandedDayId((current) =>
+                              current === day.id ? null : day.id,
+                            )
+                          }
+                          aria-label="Показати рейси"
+                        >
+                          {expandedDayId === day.id ? (
+                            <ChevronDown size={15} />
+                          ) : (
+                            <ListTree size={15} />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                    {expandedDayId === day.id ? (
+                      <tr className="day-details-row">
+                        <td colSpan={9}>
+                          <DayTripDetails dailyTripId={day.id} />
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {trip.segments.map((segment) => (
-                        <tr key={segment.id}>
-                          <td className="mono">{formatTime(segment.started_at)}</td>
-                          <td className="mono">{formatTime(segment.ended_at)}</td>
-                          <td className="mono">{formatDuration(segment.duration_seconds)}</td>
-                          <td className="mono">{formatNum(segment.mileage_km)} km</td>
-                          <td className="mono">{formatNum(segment.fuel_consumed_l, " l")}</td>
-                          <td className="mono">
-                            {formatNum(segment.average_speed_kmh)} /{" "}
-                            {formatNum(segment.max_speed_kmh)}
-                          </td>
-                          <td>
-                            <span className="muted">
-                              {segment.start_address ?? "-"} → {segment.end_address ?? "-"}
-                            </span>
-                            {segment.is_local_maneuver ? (
-                              <>
-                                {" "}
-                                <Badge>local</Badge>
-                              </>
-                            ) : null}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </section>
-
-            <section className="panel details-panel">
-              <div className="section-title">
-                <h4>Паузи між рейсами</h4>
-                <Badge tone="warning">обчислено</Badge>
-              </div>
-              {trip.derivedPauses.length === 0 ? (
-                <p className="empty-state">Немає пауз між сегментами</p>
-              ) : (
-                <ul className="pause-list">
-                  {trip.derivedPauses.map((pause, index) => (
-                    <li className="pause-item" key={`${pause.startedAt}-${index}`}>
-                      <div className="mono">
-                        {formatTime(pause.startedAt)} → {formatTime(pause.endedAt)}
-                      </div>
-                      <div className="muted">{formatDuration(pause.durationSeconds)}</div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+                    ) : null}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </td>
     </tr>
+  );
+}
+
+function DayTripDetails({ dailyTripId }: { dailyTripId: string }) {
+  const [data, setData] = useState<DetailsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/reports/range/details?dailyTripId=${encodeURIComponent(dailyTripId)}`,
+        );
+        setData(await readJsonResponse<DetailsResponse>(response));
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error ? loadError.message : "Не вдалося завантажити рейси",
+        );
+      }
+    })();
+  }, [dailyTripId]);
+
+  if (error) {
+    return <div className="error-banner">{error}</div>;
+  }
+  if (!data) {
+    return (
+      <div className="inline-loading">
+        <RefreshCw className="spin" size={15} />
+        Завантажуємо рейси…
+      </div>
+    );
+  }
+  if (data.segments.length === 0) {
+    return <p className="empty-state">За цю дату немає сегментів поїздок.</p>;
+  }
+
+  return (
+    <div className="day-details">
+      <table className="trip-segments-table">
+        <thead>
+          <tr>
+            <th>Початок</th>
+            <th>Кінець</th>
+            <th>Тривалість</th>
+            <th>Пробіг</th>
+            <th>Паливо</th>
+            <th>Vсер/макс</th>
+            <th>Маршрут</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.segments.map((segment) => (
+            <tr key={segment.id}>
+              <td className="mono">{formatTime(segment.started_at)}</td>
+              <td className="mono">{formatTime(segment.ended_at)}</td>
+              <td className="mono">{formatDuration(segment.duration_seconds)}</td>
+              <td className="mono">{formatNum(segment.mileage_km, " km")}</td>
+              <td className="mono">{formatNum(segment.fuel_consumed_l, " l")}</td>
+              <td className="mono">
+                {formatNum(segment.average_speed_kmh)} / {formatNum(segment.max_speed_kmh)}
+              </td>
+              <td>
+                {segment.start_address ?? "—"} → {segment.end_address ?? "—"}
+                {segment.is_local_maneuver ? <Badge>local</Badge> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="pause-summary">
+        <Clock3 size={14} />
+        Обчислених пауз між рейсами: <strong>{data.derivedPauses.length}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -974,6 +1027,7 @@ function Badge({
   children: React.ReactNode;
   tone?: "success" | "danger" | "warning";
 }) {
-  const toneClass = tone ? ` badge--${tone}` : "";
-  return <span className={`badge${toneClass}`}>{children}</span>;
+  return (
+    <span className={`badge${tone ? ` badge--${tone}` : ""}`}>{children}</span>
+  );
 }
