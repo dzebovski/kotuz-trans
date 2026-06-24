@@ -17,7 +17,7 @@ import {
   Sun,
   Truck,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -245,6 +245,10 @@ export default function HomePage() {
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null);
   const [vehicleQuery, setVehicleQuery] = useState("");
   const [theme, setTheme] = useState<ThemeMode>("dark");
+  const mutatingRef = useRef(false);
+  const kickingRef = useRef(false);
+
+  mutatingRef.current = mutating;
 
   const load = useCallback(
     async (silent = false): Promise<RangeResponse | null> => {
@@ -280,15 +284,69 @@ export default function HomePage() {
     void load();
   }, [from, load, to]);
 
+  const kickNextQueuedDate = useCallback(async (): Promise<RunRangeResponse> => {
+    const response = await fetch("/api/reports/range/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from, to }),
+    });
+    return readJsonResponse<RunRangeResponse>(response);
+  }, [from, to]);
+
   useEffect(() => {
     if (!data || data.ready) {
       return;
     }
+
+    let cancelled = false;
+
+    const tick = async (): Promise<void> => {
+      if (cancelled || mutatingRef.current) {
+        return;
+      }
+
+      const json = await load(true);
+      if (cancelled || !json || json.ready) {
+        return;
+      }
+
+      const hasQueued = json.coverage.some((day) => day.state === "queued");
+      const hasRunning = json.coverage.some(
+        (day) => day.state === "running" || day.state === "partial",
+      );
+
+      if (!hasQueued || hasRunning || kickingRef.current) {
+        return;
+      }
+
+      kickingRef.current = true;
+      try {
+        setRangeRunStatus("Обробляю наступну дату з черги…");
+        const result = await kickNextQueuedDate();
+        if (result.reportDate) {
+          setRangeRunStatus(`Оброблено ${formatDate(result.reportDate)}…`);
+        }
+        await load(true);
+      } catch (kickError) {
+        setError(
+          kickError instanceof Error
+            ? kickError.message
+            : "Не вдалося обробити дату з черги",
+        );
+      } finally {
+        kickingRef.current = false;
+      }
+    };
+
+    void tick();
     const interval = window.setInterval(() => {
-      void load(true);
+      void tick();
     }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [data, load]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [data?.ready, kickNextQueuedDate, load]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -693,7 +751,7 @@ function CoveragePanel({
   const running = coverage.filter((day) => day.state === "running").length;
   const partial = coverage.filter((day) => day.state === "partial").length;
   const missing = coverage.filter((day) => day.state === "missing").length;
-  const importActive = mutating || running + partial > 0;
+  const importActive = mutating || running + partial > 0 || queued > 0;
   const percent = coverage.length > 0 ? Math.round((ready / coverage.length) * 100) : 0;
   const title = loading
     ? "Перевіряю, що вже є в БД"
@@ -702,7 +760,7 @@ function CoveragePanel({
       : importActive
         ? "Завантаження запущене кнопкою"
         : queued > 0
-          ? "Дати в черзі — cron або повторний запуск доб'є решту"
+          ? "Завантаження дат з черги"
           : missing > 0
             ? "Натисни «Запустити завантаження». Система поставить дати в чергу і стартує першу."
             : "Очікую готовність усіх дат";
@@ -713,7 +771,7 @@ function CoveragePanel({
       : importActive
         ? (runStatus ?? "Нічого не натискай. Імпорт іде, сторінка оновлює статус.")
         : queued > 0
-          ? "Черга заповнена. Фоновий воркер або повторний запуск обробить дати."
+          ? "Наступні дати обробляються автоматично. Сторінку можна не закривати."
           : missing > 0
             ? "Натисни «Запустити завантаження» — дати потраплять у чергу і перша одразу стартує."
             : "Якщо таблиця ще не показана — дочекайся завершення поточного імпорту або повтори запуск.";
@@ -734,18 +792,14 @@ function CoveragePanel({
       <div className="progress-track">
         <span className="progress-track__fill" style={{ width: `${percent}%` }} />
       </div>
-      {!loading && (queued > 0 || missing > 0) && !importActive && failed.length === 0 ? (
+      {!loading && missing > 0 && !importActive && failed.length === 0 ? (
         <div className="coverage-state-card">
           <Clock3 size={18} />
           <div>
-            <strong>
-              {queued > 0
-                ? `${queued} дат у черзі.`
-                : `${missing} дат ще не поставлені в чергу.`}
-            </strong>
+            <strong>{`${missing} дат ще не поставлені в чергу.`}</strong>
             <span>
-              Для старту натисни «Запустити завантаження». Це запустить імпорт
-              напряму з кнопки.
+              Натисни «Запустити завантаження», щоб поставити їх у чергу і
+              стартувати імпорт.
             </span>
           </div>
         </div>
