@@ -81,6 +81,7 @@ type RangeVehicle = {
 type RangeResponse = {
   range: { from: string; to: string; today: string };
   ready: boolean;
+  partialReady: boolean;
   coverage: CoverageDay[];
   summary: {
     vehicleCount: number;
@@ -123,6 +124,12 @@ type RunRangeResponse = {
   status: "completed" | "partial" | "failed" | "skipped" | "idle";
   reportDate?: string;
   reason?: string | null;
+};
+
+type EnsureRangeResponse = {
+  ok: boolean;
+  queued: string[];
+  skipped: string[];
 };
 
 type ThemeMode = "light" | "dark";
@@ -320,39 +327,38 @@ export default function HomePage() {
   ): Promise<void> {
     setMutating(true);
     setError(null);
-    setRangeRunStatus("Запускаю імпорт по вибраному періоду…");
+    setRangeRunStatus("Ставлю пропущені дати в чергу…");
 
-    let nextMode = mode;
-    let nextRetryFailed = retryFailed;
     try {
-      for (let step = 0; step < 100; step += 1) {
-        setRangeRunStatus("Імпорт виконується. Один запит обробляє одну дату.");
-        const response = await fetch("/api/reports/range/run", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            from,
-            to,
-            mode: nextMode,
-            retryFailed: nextRetryFailed,
-          }),
-        });
-        const result = await readJsonResponse<RunRangeResponse>(response);
-        const report = await load(true);
+      const ensureResponse = await fetch("/api/reports/range/ensure", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          from,
+          to,
+          mode,
+          retryFailed,
+        }),
+      });
+      const ensureResult = await readJsonResponse<EnsureRangeResponse>(
+        ensureResponse,
+      );
+      setRangeRunStatus(
+        ensureResult.queued.length > 0
+          ? `У черзі ${ensureResult.queued.length} дат. Запускаю першу…`
+          : "Черга вже заповнена. Перевіряю наявні завдання…",
+      );
 
-        if (result.reportDate) {
-          setRangeRunStatus(`Оброблено дату ${formatDate(result.reportDate)}.`);
-        }
-        if (report?.ready || result.status === "idle") {
-          break;
-        }
-        if (result.status !== "completed" && result.status !== "skipped") {
-          break;
-        }
-
-        nextMode = "missing";
-        nextRetryFailed = false;
+      const runResponse = await fetch("/api/reports/range/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from, to }),
+      });
+      const runResult = await readJsonResponse<RunRangeResponse>(runResponse);
+      if (runResult.reportDate) {
+        setRangeRunStatus(`Стартовано дату ${formatDate(runResult.reportDate)}.`);
       }
+      await load(true);
     } catch (runError) {
       setError(
         runError instanceof Error
@@ -402,6 +408,7 @@ export default function HomePage() {
       vehicle.vehicle.displayName.toLowerCase().includes(normalizedQuery),
     ) ?? [];
   const readyDates = data?.coverage.filter((day) => day.ready).length ?? 0;
+  const showReportData = Boolean(data?.ready || data?.partialReady);
   const todayCoverage = data?.coverage.find((day) => day.isToday);
   const selectedPresetDays = (() => {
     const days = inclusiveDateCount(from, to);
@@ -577,7 +584,17 @@ export default function HomePage() {
                 void runRangeImport("missing", true)
               }
             />
-          ) : (
+          ) : null}
+
+          {data?.partialReady ? (
+            <div className="provisional-banner">
+              <Clock3 size={16} />
+              Готово {readyDates}/{data.coverage.length} дат. Решта довантажується
+              у фоні — сторінка оновлюється автоматично.
+            </div>
+          ) : null}
+
+          {showReportData ? (
             <>
               {todayCoverage?.state === "provisional" ? (
                 <div className="provisional-banner">
@@ -587,11 +604,11 @@ export default function HomePage() {
               ) : null}
 
               <section className="range-summary-grid">
-                <SummaryMetric label="Пробіг" value={formatNum(data.summary?.totalMileageKm ?? 0, " km")} />
-                <SummaryMetric label="Паливо" value={formatNum(data.summary?.totalFuelL ?? 0, " l")} />
-                <SummaryMetric label="Час руху" value={formatDuration(data.summary?.totalMovementSeconds ?? 0)} />
-                <SummaryMetric label="Перевищення" value={`${data.summary?.vehiclesOverSpeedLimit ?? 0} авто`} tone="danger" />
-                <SummaryMetric label="Аномалії" value={`${data.summary?.anomalyVehicles ?? 0} авто`} tone="warning" />
+                <SummaryMetric label="Пробіг" value={formatNum(data?.summary?.totalMileageKm ?? 0, " km")} />
+                <SummaryMetric label="Паливо" value={formatNum(data?.summary?.totalFuelL ?? 0, " l")} />
+                <SummaryMetric label="Час руху" value={formatDuration(data?.summary?.totalMovementSeconds ?? 0)} />
+                <SummaryMetric label="Перевищення" value={`${data?.summary?.vehiclesOverSpeedLimit ?? 0} авто`} tone="danger" />
+                <SummaryMetric label="Аномалії" value={`${data?.summary?.anomalyVehicles ?? 0} авто`} tone="warning" />
               </section>
 
               <section className="panel vehicle-search-row" aria-label="Пошук автомобіля">
@@ -606,7 +623,7 @@ export default function HomePage() {
                   />
                 </label>
                 <p className="muted search-hint">
-                  {vehicles.length} з {data.vehicles.length} авто
+                  {vehicles.length} з {data?.vehicles.length ?? 0} авто
                 </p>
               </section>
 
@@ -650,7 +667,7 @@ export default function HomePage() {
                 </div>
               </section>
             </>
-          )}
+          ) : null}
         </div>
       </main>
     </div>
@@ -685,9 +702,9 @@ function CoveragePanel({
       : importActive
         ? "Завантаження запущене кнопкою"
         : queued > 0
-          ? "Дати в черзі — можна запускати"
+          ? "Дати в черзі — cron або повторний запуск доб'є решту"
           : missing > 0
-            ? "Є дати без snapshot"
+            ? "Натисни «Запустити завантаження». Система поставить дати в чергу і стартує першу."
             : "Очікую готовність усіх дат";
   const description = loading
     ? "Зараз читаю coverage по вибраному періоду."
@@ -696,9 +713,9 @@ function CoveragePanel({
       : importActive
         ? (runStatus ?? "Нічого не натискай. Імпорт іде, сторінка оновлює статус.")
         : queued > 0
-          ? "Натисни «Запустити завантаження», щоб обробити дати з черги."
+          ? "Черга заповнена. Фоновий воркер або повторний запуск обробить дати."
           : missing > 0
-            ? "Натисни «Запустити завантаження». Система поставить ці дати в чергу і одразу почне імпорт."
+            ? "Натисни «Запустити завантаження» — дати потраплять у чергу і перша одразу стартує."
             : "Якщо таблиця ще не показана — дочекайся завершення поточного імпорту або повтори запуск.";
 
   return (

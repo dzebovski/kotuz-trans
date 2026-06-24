@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/daily-fleet-report",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/ingestion-worker",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

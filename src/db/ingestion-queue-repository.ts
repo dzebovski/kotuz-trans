@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { getSupabaseAdmin } from "./supabase-admin";
 
 export type IngestionQueueMode = "missing" | "retry_failed" | "full_refresh";
@@ -137,55 +136,25 @@ export async function claimNextIngestionDate(
   return (data as IngestionQueueRecord | null) ?? null;
 }
 
-export async function claimNextIngestionDateForRange(input: {
-  jobName: string;
-  from: string;
-  to: string;
-}): Promise<IngestionQueueRecord | null> {
-  const supabase = getSupabaseAdmin();
-  const { data: candidates, error: readError } = await supabase
+export async function releaseIngestionQueueClaim(
+  item: IngestionQueueRecord,
+): Promise<void> {
+  if (!item.lock_token) {
+    return;
+  }
+  const { error } = await getSupabaseAdmin()
     .from("ingestion_queue")
-    .select("*")
-    .eq("job_name", input.jobName)
-    .gte("report_date", input.from)
-    .lte("report_date", input.to)
-    .eq("status", "pending")
-    .lte("run_after", new Date().toISOString())
-    .lt("attempts", 3)
-    .order("report_date")
-    .order("created_at")
-    .limit(5);
-
-  if (readError) {
-    throw new Error(`Failed to read ingestion queue candidates: ${readError.message}`);
+    .update({
+      status: "pending",
+      attempts: Math.max(0, item.attempts - 1),
+      locked_at: null,
+      lock_token: null,
+    })
+    .eq("id", item.id)
+    .eq("lock_token", item.lock_token);
+  if (error) {
+    throw new Error(`Failed to release ingestion queue claim: ${error.message}`);
   }
-
-  for (const candidate of (candidates ?? []) as IngestionQueueRecord[]) {
-    const { data, error } = await supabase
-      .from("ingestion_queue")
-      .update({
-        status: "running",
-        attempts: candidate.attempts + 1,
-        locked_at: new Date().toISOString(),
-        lock_token: randomUUID(),
-        last_error: null,
-        completed_at: null,
-      })
-      .eq("id", candidate.id)
-      .eq("status", "pending")
-      .eq("attempts", candidate.attempts)
-      .select("*")
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to claim ingestion queue item: ${error.message}`);
-    }
-    if (data) {
-      return data as IngestionQueueRecord;
-    }
-  }
-
-  return null;
 }
 
 export async function completeIngestionQueueItem(input: {

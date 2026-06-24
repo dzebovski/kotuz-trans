@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerEnv } from "@/config/env";
-import {
-  enqueueIngestionDate,
-  listIngestionQueueForRange,
-} from "@/db/ingestion-queue-repository";
-import { listIngestionRunsForRange } from "@/db/ingestion-runs-repository";
-import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/run-daily-fleet-report";
+import { enqueueMissingDatesForRange } from "@/jobs/ingestion-queue-worker";
 import { requireUser } from "@/lib/auth/require-user";
 import { validateReportRange } from "@/utils/report-range";
 
@@ -48,66 +43,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!range.ok) {
       return NextResponse.json({ error: range.error }, { status: 400 });
     }
-    const [runs, queue] = await Promise.all([
-      listIngestionRunsForRange(
-        DAILY_FLEET_REPORT_JOB_NAME,
-        range.from,
-        range.to,
-      ),
-      listIngestionQueueForRange(
-        DAILY_FLEET_REPORT_JOB_NAME,
-        range.from,
-        range.to,
-      ),
-    ]);
-    const runByDate = new Map(runs.map((run) => [run.report_date, run]));
-    const queueByDate = new Map(queue.map((item) => [item.report_date, item]));
-    const queued: string[] = [];
-    const skipped: string[] = [];
 
-    for (const date of range.dates) {
-      if (date === range.today) {
-        skipped.push(date);
-        continue;
-      }
-      const run = runByDate.get(date);
-      const queueItem = queueByDate.get(date);
-      if (body.mode === "missing" && run?.status === "completed" && run.is_final) {
-        skipped.push(date);
-        continue;
-      }
-      if (
-        body.mode === "missing" &&
-        (run?.status === "running" ||
-          queueItem?.status === "running" ||
-          queueItem?.status === "pending")
-      ) {
-        skipped.push(date);
-        continue;
-      }
-      if (
-        body.mode === "missing" &&
-        queueItem?.status === "failed" &&
-        body.retryFailed !== true
-      ) {
-        skipped.push(date);
-        continue;
-      }
-
-      const mode =
-        body.mode === "force" || (run?.status === "completed" && !run.is_final)
-          ? "full_refresh"
-          : run?.status === "partial" || run?.status === "failed"
-            ? "retry_failed"
-            : "missing";
-      await enqueueIngestionDate({
-        jobName: DAILY_FLEET_REPORT_JOB_NAME,
-        reportDate: date,
-        mode,
-        resetAttempts: body.retryFailed === true || body.mode === "force",
-      });
-      queued.push(date);
-    }
+    const { queued, skipped } = await enqueueMissingDatesForRange({
+      from: range.from,
+      to: range.to,
+      dates: range.dates,
+      today: range.today,
+      mode: body.mode,
+      retryFailed: body.retryFailed === true,
+    });
 
     return NextResponse.json({ ok: true, queued, skipped });
   } catch (error) {
@@ -115,4 +59,3 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

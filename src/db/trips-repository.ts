@@ -452,6 +452,83 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
   });
 }
 
+export async function listDailyTripsForDates(
+  dates: string[],
+): Promise<RangeDailyTrip[]> {
+  if (dates.length === 0) {
+    return [];
+  }
+  const { data, error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .select(
+      `
+      id,
+      report_date,
+      mileage_km,
+      fuel_consumed_l,
+      average_fuel_consumption_l_per_100km,
+      rolling_1000km_consumption_l_per_100km,
+      movement_duration_seconds,
+      parking_count_from_trips,
+      parking_duration_seconds,
+      max_speed_kmh,
+      anomaly_status,
+      route_key,
+      vehicles!inner (
+        id,
+        display_name,
+        tractor_number,
+        wialon_unit_id
+      )
+    `,
+    )
+    .in("report_date", dates)
+    .order("report_date");
+  if (error) {
+    throw new Error(`Failed to load trips for dates: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const relation = row.vehicles as unknown;
+    const vehicle = (Array.isArray(relation) ? relation[0] : relation) as {
+      id: string;
+      display_name: string;
+      tractor_number: string;
+      wialon_unit_id: number;
+    };
+    return {
+      id: row.id as string,
+      reportDate: row.report_date as string,
+      mileageKm: Number(row.mileage_km),
+      fuelConsumedL:
+        row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+      averageFuelConsumptionLPer100Km:
+        row.average_fuel_consumption_l_per_100km == null
+          ? null
+          : Number(row.average_fuel_consumption_l_per_100km),
+      rolling1000KmConsumptionLPer100Km:
+        row.rolling_1000km_consumption_l_per_100km == null
+          ? null
+          : Number(row.rolling_1000km_consumption_l_per_100km),
+      movementDurationSeconds:
+        (row.movement_duration_seconds as number | null) ?? null,
+      parkingCount: Number(row.parking_count_from_trips ?? 0),
+      parkingDurationSeconds:
+        (row.parking_duration_seconds as number | null) ?? null,
+      maxSpeedKmh:
+        row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
+      anomalyStatus: row.anomaly_status as string,
+      routeKey: (row.route_key as string | null) ?? null,
+      vehicle: {
+        id: vehicle.id,
+        displayName: vehicle.display_name,
+        tractorNumber: vehicle.tractor_number,
+        wialonUnitId: Number(vehicle.wialon_unit_id),
+      },
+    };
+  });
+}
+
 export async function listDailyTripsForRange(
   from: string,
   to: string,

@@ -3,7 +3,7 @@ import { aggregateTripsByVehicle } from "@/analytics/range-report";
 import { getServerEnv } from "@/config/env";
 import { listIngestionQueueForRange } from "@/db/ingestion-queue-repository";
 import { listIngestionRunsForRange } from "@/db/ingestion-runs-repository";
-import { listDailyTripsForRange } from "@/db/trips-repository";
+import { listDailyTripsForDates } from "@/db/trips-repository";
 import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/run-daily-fleet-report";
 import { requireUser } from "@/lib/auth/require-user";
 import { validateReportRange } from "@/utils/report-range";
@@ -103,38 +103,43 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     const ready = coverage.every((day) => day.ready);
-    const trips = ready
-      ? await listDailyTripsForRange(range.from, range.to)
-      : [];
-    const vehicles = ready ? aggregateTripsByVehicle(trips) : [];
-    const summary = ready
-      ? {
-          vehicleCount: vehicles.length,
-          dateCount: range.dates.length,
-          totalMileageKm: vehicles.reduce(
-            (sum, vehicle) => sum + vehicle.mileageKm,
-            0,
-          ),
-          totalFuelL: vehicles.reduce(
-            (sum, vehicle) => sum + vehicle.fuelConsumedL,
-            0,
-          ),
-          totalMovementSeconds: vehicles.reduce(
-            (sum, vehicle) => sum + vehicle.movementDurationSeconds,
-            0,
-          ),
-          vehiclesOverSpeedLimit: vehicles.filter(
-            (vehicle) => (vehicle.maxSpeedKmh ?? 0) > 86,
-          ).length,
-          anomalyVehicles: vehicles.filter(
-            (vehicle) => vehicle.anomalyDays > 0,
-          ).length,
-        }
-      : null;
+    const readyDates = coverage.filter((day) => day.ready).map((day) => day.date);
+    const partialReady = readyDates.length > 0 && !ready;
+    const trips =
+      readyDates.length > 0
+        ? await listDailyTripsForDates(readyDates)
+        : [];
+    const vehicles = trips.length > 0 ? aggregateTripsByVehicle(trips) : [];
+    const summary =
+      vehicles.length > 0
+        ? {
+            vehicleCount: vehicles.length,
+            dateCount: readyDates.length,
+            totalMileageKm: vehicles.reduce(
+              (sum, vehicle) => sum + vehicle.mileageKm,
+              0,
+            ),
+            totalFuelL: vehicles.reduce(
+              (sum, vehicle) => sum + vehicle.fuelConsumedL,
+              0,
+            ),
+            totalMovementSeconds: vehicles.reduce(
+              (sum, vehicle) => sum + vehicle.movementDurationSeconds,
+              0,
+            ),
+            vehiclesOverSpeedLimit: vehicles.filter(
+              (vehicle) => (vehicle.maxSpeedKmh ?? 0) > 86,
+            ).length,
+            anomalyVehicles: vehicles.filter(
+              (vehicle) => vehicle.anomalyDays > 0,
+            ).length,
+          }
+        : null;
 
     return NextResponse.json({
       range: { from: range.from, to: range.to, today: range.today },
       ready,
+      partialReady,
       coverage,
       summary,
       vehicles,
