@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
-  Database,
   Gauge,
   ListTree,
   LogOut,
@@ -293,8 +292,10 @@ export default function HomePage() {
     return readJsonResponse<RunRangeResponse>(response);
   }, [from, to]);
 
+  const shouldPollCoverage = Boolean(data && !data.ready);
+
   useEffect(() => {
-    if (!data || data.ready) {
+    if (!shouldPollCoverage) {
       return;
     }
 
@@ -346,7 +347,7 @@ export default function HomePage() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [data?.ready, kickNextQueuedDate, load]);
+  }, [shouldPollCoverage, kickNextQueuedDate, load]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -472,15 +473,17 @@ export default function HomePage() {
     const days = inclusiveDateCount(from, to);
     return to === getKyivDate(-1) && [1, 7, 30, 90].includes(days) ? days : null;
   })();
+  const totalMileageKm = data?.summary?.totalMileageKm ?? 0;
+  const totalFuelL = data?.summary?.totalFuelL ?? 0;
+  const averageFleetSpeedKmh =
+    data?.summary && data.summary.totalMovementSeconds > 0
+      ? totalMileageKm / (data.summary.totalMovementSeconds / 3600)
+      : null;
+  const averageFuelConsumptionLPer100Km =
+    totalMileageKm > 0 ? (totalFuelL / totalMileageKm) * 100 : null;
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="Навігація">
-        <div className="brand-mark" title="Fleet Analytics">
-          <Database size={18} />
-        </div>
-      </aside>
-
       <main className="page">
         <header className="topbar">
           <div className="topbar__title">
@@ -488,8 +491,8 @@ export default function HomePage() {
               <Truck size={18} />
             </div>
             <div>
-              <h1>Fleet Analytics</h1>
-              <p className="mono">range / vehicle / day / trip</p>
+              <h1>Brokinvest Group</h1>
+              <p className="mono">moniterra.services</p>
             </div>
           </div>
           <div className="topbar__actions">
@@ -505,39 +508,21 @@ export default function HomePage() {
         </header>
 
         <div className="content">
-          <section className="hero-strip">
-            <div>
-              <p className="eyebrow">Fleet operations console</p>
-              <h2>Звіт за період</h2>
+          <section className="report-hero">
+            <div className="report-hero__copy">
+              <a className="service-link" href="https://moniterra.services" rel="noreferrer">
+                moniterra.services
+              </a>
+              <h2>Зведені звіти по машинах</h2>
               <p>
                 Агреговані показники по машинах за{" "}
                 <span className="mono">{formatDate(from)} — {formatDate(to)}</span>.
-                Дані відображаються після завершення всіх дат.
+                Статус дат, завантаження і таблиця оновлюються без зміни API.
               </p>
             </div>
-            <div className="chip-row">
-              <Badge tone={data?.ready ? "success" : "warning"}>
-                {data?.ready ? <CheckCircle2 size={13} /> : <Clock3 size={13} />}
-                {data?.ready ? "період готовий" : `${readyDates}/${data?.coverage.length ?? 0} дат`}
-              </Badge>
-              <Badge>
-                <Truck size={13} />
-                {data?.summary?.vehicleCount ?? 0} авто
-              </Badge>
-            </div>
-          </section>
-
-          {error ? <div className="error-banner">{error}</div> : null}
-
-          <section className="panel range-toolbar">
-            <div className="range-block">
-              <span className="range-block__label">Швидкий вибір</span>
-              <p className="range-block__hint">
-                Натиснув пресет — період одразу обирається. Завантаження
-                стартує окремою кнопкою нижче.
-              </p>
+            <div className="report-filters" aria-label="Фільтри періоду">
               <div className="preset-row" aria-label="Швидкий вибір періоду">
-                {([1, 7, 30, 90] as const).map((days) => (
+                {([1, 7, 30] as const).map((days) => (
                   <button
                     className={`button button--ghost${
                       selectedPresetDays === days ? " button--selected" : ""
@@ -547,19 +532,12 @@ export default function HomePage() {
                     onClick={() => applyPreset(days)}
                     disabled={mutating}
                   >
-                    {days === 1 ? "Учора" : `${days} днів`}
+                    {days === 1 ? "Учора" : days === 7 ? "Тиждень" : "Місяць"}
                   </button>
                 ))}
               </div>
-            </div>
-            <div className="range-block range-block--custom">
-              <span className="range-block__label">Свій період</span>
-              <p className="range-block__hint">
-                Якщо міняєш дати вручну — натисни «Обрати період», потім
-                «Запустити завантаження».
-              </p>
-              <div className="range-fields">
-                <label className="field">
+              <div className="range-fields report-range-fields">
+                <label className="field field--compact">
                   <span>Від</span>
                   <input
                     className="input mono"
@@ -570,7 +548,7 @@ export default function HomePage() {
                   />
                 </label>
                 <span className="range-separator">→</span>
-                <label className="field">
+                <label className="field field--compact">
                   <span>До</span>
                   <input
                     className="input mono"
@@ -588,61 +566,35 @@ export default function HomePage() {
                   disabled={mutating || !draftFrom || !draftTo}
                 >
                   <CalendarDays size={16} />
-                  Обрати період
+                  Застосувати
                 </button>
-              </div>
-              <div className="range-actions">
-                <button
-                  className="button button--primary"
-                  type="button"
-                  disabled={mutating}
-                  onClick={() => void runRangeImport("missing")}
-                >
-                  <RefreshCw className={mutating ? "spin" : undefined} size={16} />
-                  Запустити завантаження
-                </button>
-                <button
-                  className="button button--ghost"
-                  type="button"
-                  disabled={mutating}
-                  onClick={() => void runRangeImport("force")}
-                >
-                  <RefreshCw size={16} />
-                  Повністю перезавантажити
-                </button>
-                {todayCoverage ? (
-                  <button
-                    className="button button--ghost"
-                    type="button"
-                    disabled={mutating}
-                    onClick={() =>
-                      void runMutation(async () => {
-                        const response = await fetch("/api/reports/range/today", {
-                          method: "POST",
-                        });
-                        await readJsonResponse(response);
-                      })
-                    }
-                  >
-                    <RefreshCw size={16} />
-                    Оновити сьогодні
-                  </button>
-                ) : null}
               </div>
             </div>
           </section>
 
-          {!data?.ready ? (
-            <CoveragePanel
-              coverage={data?.coverage ?? []}
-              loading={loading}
-              mutating={mutating}
-              runStatus={rangeRunStatus}
-              onRetry={() =>
-                void runRangeImport("missing", true)
-              }
-            />
-          ) : null}
+          {error ? <div className="error-banner">{error}</div> : null}
+
+          <CoveragePanel
+            coverage={data?.coverage ?? []}
+            loading={loading}
+            mutating={mutating}
+            ready={Boolean(data?.ready)}
+            runStatus={rangeRunStatus}
+            onImport={() => void runRangeImport("missing")}
+            onForceReload={() => void runRangeImport("force")}
+            onRetry={() => void runRangeImport("missing", true)}
+            onRefreshToday={
+              todayCoverage
+                ? () =>
+                    void runMutation(async () => {
+                      const response = await fetch("/api/reports/range/today", {
+                        method: "POST",
+                      });
+                      await readJsonResponse(response);
+                    })
+                : undefined
+            }
+          />
 
           {data?.partialReady ? (
             <div className="provisional-banner">
@@ -661,67 +613,116 @@ export default function HomePage() {
                 </div>
               ) : null}
 
-              <section className="range-summary-grid">
-                <SummaryMetric label="Пробіг" value={formatNum(data?.summary?.totalMileageKm ?? 0, " km")} />
-                <SummaryMetric label="Паливо" value={formatNum(data?.summary?.totalFuelL ?? 0, " l")} />
-                <SummaryMetric label="Час руху" value={formatDuration(data?.summary?.totalMovementSeconds ?? 0)} />
-                <SummaryMetric label="Перевищення" value={`${data?.summary?.vehiclesOverSpeedLimit ?? 0} авто`} tone="danger" />
-                <SummaryMetric label="Аномалії" value={`${data?.summary?.anomalyVehicles ?? 0} авто`} tone="warning" />
+              <section className="fleet-summary" aria-label="Зведені показники">
+                <div className="fleet-summary__count">
+                  <strong>{data?.summary?.vehicleCount ?? 0} авто</strong>
+                  <span>{data?.summary?.dateCount ?? 0} дат у звіті</span>
+                  <div className="chip-row">
+                    <Badge
+                      tone={
+                        (data?.summary?.vehiclesOverSpeedLimit ?? 0) > 0
+                          ? "danger"
+                          : "success"
+                      }
+                    >
+                      <Gauge size={13} />
+                      {data?.summary?.vehiclesOverSpeedLimit ?? 0} перевищень
+                    </Badge>
+                    <Badge
+                      tone={
+                        (data?.summary?.anomalyVehicles ?? 0) > 0
+                          ? "warning"
+                          : "success"
+                      }
+                    >
+                      <AlertTriangle size={13} />
+                      {data?.summary?.anomalyVehicles ?? 0} аномалій
+                    </Badge>
+                  </div>
+                </div>
+                <SummaryMetric label="Пройдена відстань" value={formatNum(totalMileageKm, " km")} />
+                <SummaryMetric label="Витрачено палива" value={formatNum(totalFuelL, " l")} />
+                <SummaryMetric label="Середня швидкість флоту" value={formatNum(averageFleetSpeedKmh, " km/h")} />
+                <SummaryMetric label="Середня витрата пального" value={formatNum(averageFuelConsumptionLPer100Km, " l/100km")} />
               </section>
 
-              <section className="panel vehicle-search-row" aria-label="Пошук автомобіля">
-                <label className="search-field">
-                  <Search size={15} />
-                  <input
-                    className="input"
-                    type="search"
-                    placeholder="Пошук по номеру машини..."
-                    value={vehicleQuery}
-                    onChange={(event) => setVehicleQuery(event.target.value)}
-                  />
-                </label>
-                <p className="muted search-hint">
-                  {vehicles.length} з {data?.vehicles.length ?? 0} авто
-                </p>
+              <section className="report-section" aria-label="Пошук автомобіля">
+                <div className="section-heading">
+                  <h3>Пошук по машинах</h3>
+                  <p className="muted">
+                    {vehicles.length} з {data?.vehicles.length ?? 0} авто
+                  </p>
+                </div>
+                <div className="panel vehicle-search-row">
+                  <label className="search-field">
+                    <Search size={15} />
+                    <input
+                      className="input"
+                      type="search"
+                      placeholder="Пошук по номеру машини..."
+                      value={vehicleQuery}
+                      onChange={(event) => setVehicleQuery(event.target.value)}
+                    />
+                  </label>
+                </div>
               </section>
 
-              <section className="panel table-shell">
-                <div className="table-scroll">
-                  <table className="data-table range-table">
-                    <thead>
-                      <tr>
-                        <th>Авто</th>
-                        <th className="data-table__number">Днів</th>
-                        <th className="data-table__number">Пробіг</th>
-                        <th className="data-table__number">Паливо</th>
-                        <th className="data-table__number">Розхід</th>
-                        <th className="data-table__number">1000 км</th>
-                        <th className="data-table__number">Макс.</th>
-                        <th className="data-table__number">Рух</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vehicles.map((vehicle) => (
-                        <Fragment key={vehicle.vehicle.id}>
-                          <RangeVehicleRow
-                            vehicle={vehicle}
-                            expanded={expandedVehicleId === vehicle.vehicle.id}
-                            onToggle={() =>
-                              setExpandedVehicleId((current) =>
-                                current === vehicle.vehicle.id
-                                  ? null
-                                  : vehicle.vehicle.id,
-                              )
-                            }
-                          />
-                          {expandedVehicleId === vehicle.vehicle.id ? (
-                            <RangeVehicleDetails vehicle={vehicle} />
-                          ) : null}
-                        </Fragment>
-                      ))}
-                    </tbody>
-                  </table>
+              <section className="report-section" aria-label="Таблиця машин">
+                <div className="section-heading">
+                  <h3>Таблиця</h3>
+                  <Badge>
+                    <Truck size={13} />
+                    {vehicles.length} авто
+                  </Badge>
+                </div>
+                <div className="panel table-shell">
+                  <div className="table-scroll">
+                    <table className="data-table range-table">
+                      <thead>
+                        <tr>
+                          <th>Авто</th>
+                          <th className="data-table__number">Днів</th>
+                          <th className="data-table__number">Пробіг</th>
+                          <th className="data-table__number">Паливо</th>
+                          <th className="data-table__number">Розхід</th>
+                          <th className="data-table__number">1000 км</th>
+                          <th className="data-table__number">Макс.</th>
+                          <th className="data-table__number">Рух</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {vehicles.length > 0 ? (
+                          vehicles.map((vehicle) => (
+                            <Fragment key={vehicle.vehicle.id}>
+                              <RangeVehicleRow
+                                vehicle={vehicle}
+                                expanded={expandedVehicleId === vehicle.vehicle.id}
+                                onToggle={() =>
+                                  setExpandedVehicleId((current) =>
+                                    current === vehicle.vehicle.id
+                                      ? null
+                                      : vehicle.vehicle.id,
+                                  )
+                                }
+                              />
+                              {expandedVehicleId === vehicle.vehicle.id ? (
+                                <RangeVehicleDetails vehicle={vehicle} />
+                              ) : null}
+                            </Fragment>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={9}>
+                              <div className="empty-state empty-state--table">
+                                За цим пошуком машин не знайдено.
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </section>
             </>
@@ -736,121 +737,187 @@ function CoveragePanel({
   coverage,
   loading,
   mutating,
+  ready: rangeReady,
   runStatus,
+  onImport,
+  onForceReload,
   onRetry,
+  onRefreshToday,
 }: {
   coverage: CoverageDay[];
   loading: boolean;
   mutating: boolean;
+  ready: boolean;
   runStatus: string | null;
+  onImport: () => void;
+  onForceReload: () => void;
   onRetry: () => void;
+  onRefreshToday?: () => void;
 }) {
-  const ready = coverage.filter((day) => day.ready).length;
+  const readyCount = coverage.filter((day) => day.ready).length;
   const failed = coverage.filter((day) => day.state === "failed");
   const queued = coverage.filter((day) => day.state === "queued").length;
   const running = coverage.filter((day) => day.state === "running").length;
   const partial = coverage.filter((day) => day.state === "partial").length;
   const missing = coverage.filter((day) => day.state === "missing").length;
-  const importActive = mutating || running + partial > 0 || queued > 0;
-  const percent = coverage.length > 0 ? Math.round((ready / coverage.length) * 100) : 0;
+  const activeWork = mutating || running + partial > 0;
+  const importActive = activeWork || queued > 0;
+  const percent = coverage.length > 0 ? Math.round((readyCount / coverage.length) * 100) : 0;
+  const allDataAvailable =
+    coverage.length > 0 &&
+    readyCount === coverage.length &&
+    failed.length === 0 &&
+    queued === 0 &&
+    running === 0 &&
+    partial === 0 &&
+    missing === 0;
+  const coverageSignature = coverage
+    .map((day) => `${day.date}:${day.state}:${day.ready}`)
+    .join("|");
+  const [statusCollapsed, setStatusCollapsed] = useState(false);
   const title = loading
-    ? "Перевіряю, що вже є в БД"
+    ? "Перевіряю статус даних"
     : failed.length > 0
-      ? "Є failed-дати — потрібен retry"
-      : importActive
-        ? "Завантаження запущене кнопкою"
+      ? "Є помилки завантаження"
+      : activeWork
+        ? "Завантаження в процесі"
         : queued > 0
           ? "Завантаження дат з черги"
           : missing > 0
-            ? "Натисни «Запустити завантаження». Система поставить дати в чергу і стартує першу."
-            : "Очікую готовність усіх дат";
+            ? "Потрібно завантажити дані"
+            : (rangeReady || readyCount === coverage.length) && coverage.length > 0
+              ? "Дані завантажені"
+              : "Очікую готовність даних";
   const description = loading
     ? "Зараз читаю coverage по вибраному періоду."
     : failed.length > 0
       ? "Натисни «Повторити», щоб знову запустити проблемні дати."
-      : importActive
-        ? (runStatus ?? "Нічого не натискай. Імпорт іде, сторінка оновлює статус.")
+      : activeWork
+        ? (runStatus ?? "Імпорт іде, сторінка оновлює статус автоматично.")
         : queued > 0
           ? "Наступні дати обробляються автоматично. Сторінку можна не закривати."
           : missing > 0
-            ? "Натисни «Запустити завантаження» — дати потраплять у чергу і перша одразу стартує."
-            : "Якщо таблиця ще не показана — дочекайся завершення поточного імпорту або повтори запуск.";
+            ? "Натисни «Завантажити дані для звіту» — дати потраплять у чергу і перша одразу стартує."
+            : coverage.length > 0
+              ? "Усі доступні дати для вибраного періоду готові."
+              : "Після вибору періоду тут з'явиться статус завантаження.";
+
+  useEffect(() => {
+    setStatusCollapsed(allDataAvailable);
+  }, [allDataAvailable, coverageSignature]);
 
   return (
-    <section className="panel coverage-panel" aria-live="polite">
+    <section
+      className={`panel coverage-panel status-panel${
+        statusCollapsed ? " status-panel--collapsed" : ""
+      }`}
+      aria-live="polite"
+    >
       <div className="coverage-header">
         <div>
-          <p className="eyebrow">Статус завантаження</p>
+          <p className="eyebrow">Статус даних</p>
           <h3>{title}</h3>
           <p>{description}</p>
         </div>
-        <div className="coverage-total mono">
-          <strong>{ready}/{coverage.length || "—"}</strong>
-          <span>{percent}% готово</span>
-        </div>
-      </div>
-      <div className="progress-track">
-        <span className="progress-track__fill" style={{ width: `${percent}%` }} />
-      </div>
-      {!loading && missing > 0 && !importActive && failed.length === 0 ? (
-        <div className="coverage-state-card">
-          <Clock3 size={18} />
-          <div>
-            <strong>{`${missing} дат ще не поставлені в чергу.`}</strong>
-            <span>
-              Натисни «Запустити завантаження», щоб поставити їх у чергу і
-              стартувати імпорт.
-            </span>
+        <div className="status-panel__header-actions">
+          <div className="coverage-total mono">
+            <strong>{readyCount}/{coverage.length || "—"}</strong>
+            <span>{percent}% готово</span>
           </div>
-        </div>
-      ) : null}
-      {!loading && importActive ? (
-        <div className="coverage-state-card coverage-state-card--running">
-          <RefreshCw className="spin" size={18} />
-          <div>
-            <strong>Імпорт виконується.</strong>
-            <span>
-              {runStatus ?? `В роботі: ${running + partial} дат. Готово: ${ready}/${coverage.length}.`}
-            </span>
-          </div>
-        </div>
-      ) : null}
-      <div className="coverage-days">
-        {coverage.map((day) => (
-          <div className={`coverage-day coverage-day--${day.state}`} key={day.date}>
-            <span className="mono">{formatDate(day.date)}</span>
-            <Badge
-              tone={
-                day.ready
-                  ? "success"
-                  : day.state === "failed"
-                    ? "danger"
-                    : "warning"
-              }
-            >
-              {coverageLabel(day.state)}
-            </Badge>
-            {day.expectedVehicles > 0 ? (
-              <span className="muted mono">
-                {day.successfulVehicles}/{day.expectedVehicles}
-              </span>
-            ) : null}
-            {day.lastError ? <small title={day.lastError}>{day.lastError}</small> : null}
-          </div>
-        ))}
-      </div>
-      {failed.length > 0 ? (
-        <div className="coverage-retry">
-          <span>
-            <AlertTriangle size={15} />
-            Не завантажено дат: <strong>{failed.length}</strong>
-          </span>
-          <button className="button button--primary" type="button" disabled={mutating} onClick={onRetry}>
-            <RefreshCw className={mutating ? "spin" : undefined} size={16} />
-            Повторити
+          <button
+            className="button button--ghost icon-button status-panel__toggle"
+            type="button"
+            aria-controls="coverage-status-panel-details"
+            aria-expanded={!statusCollapsed}
+            aria-label={statusCollapsed ? "Розгорнути статус даних" : "Згорнути статус даних"}
+            title={statusCollapsed ? "Розгорнути статус даних" : "Згорнути статус даних"}
+            onClick={() => setStatusCollapsed((current) => !current)}
+          >
+            {statusCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
           </button>
         </div>
-      ) : null}
+      </div>
+      <div
+        className="status-panel__details"
+        id="coverage-status-panel-details"
+        hidden={statusCollapsed}
+      >
+        <div className="progress-track">
+          <span className="progress-track__fill" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="status-panel__body">
+          {coverage.length > 0 ? (
+            <div className="coverage-days">
+              {coverage.map((day) => {
+                const showVehicleProgress =
+                  day.expectedVehicles > 0 &&
+                  (!day.ready ||
+                    day.successfulVehicles < day.expectedVehicles ||
+                    day.state === "failed" ||
+                    day.state === "partial");
+
+                return (
+                  <div className={`coverage-day coverage-day--${day.state}`} key={day.date}>
+                    <div className="coverage-day__main">
+                      <span className="coverage-day__date mono">{formatDate(day.date)}</span>
+                      <Badge
+                        tone={
+                          day.ready
+                            ? "success"
+                            : day.state === "failed"
+                              ? "danger"
+                              : "warning"
+                        }
+                      >
+                        {coverageLabel(day.state)}
+                      </Badge>
+                    </div>
+                    {showVehicleProgress ? (
+                      <span className="coverage-day__meta mono">
+                        {day.successfulVehicles} з {day.expectedVehicles} авто
+                      </span>
+                    ) : null}
+                    {day.lastError ? <small title={day.lastError}>{day.lastError}</small> : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-state empty-state--compact">
+              {loading ? "Завантажую статус дат..." : "Немає статусів для вибраного періоду."}
+            </div>
+          )}
+        </div>
+        <div className="status-actions">
+          {failed.length > 0 ? (
+            <>
+              <span className="status-actions__note">
+                <AlertTriangle size={15} />
+                Не завантажено дат: <strong>{failed.length}</strong>
+              </span>
+              <button className="button button--primary" type="button" disabled={mutating} onClick={onRetry}>
+                <RefreshCw className={mutating ? "spin" : undefined} size={16} />
+                Повторити
+              </button>
+            </>
+          ) : (
+            <button className="button button--primary" type="button" disabled={loading || mutating} onClick={onImport}>
+              {importActive ? <RefreshCw className="spin" size={16} /> : <CheckCircle2 size={16} />}
+              {missing > 0 ? "Завантажити дані для звіту" : "Довантажити пропущені"}
+            </button>
+          )}
+          <button className="button button--ghost" type="button" disabled={loading || mutating} onClick={onForceReload}>
+            <RefreshCw size={16} />
+            Повністю перезавантажити
+          </button>
+          {onRefreshToday ? (
+            <button className="button button--ghost" type="button" disabled={loading || mutating} onClick={onRefreshToday}>
+              <RefreshCw size={16} />
+              Оновити сьогодні
+            </button>
+          ) : null}
+        </div>
+      </div>
     </section>
   );
 }
