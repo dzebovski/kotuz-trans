@@ -1,6 +1,5 @@
 import { DateTime } from "luxon";
-import { calculateDynamicBaseline } from "@/analytics/baseline";
-import { evaluateFuelAnomaly } from "@/analytics/anomaly";
+import { evaluateFuelConsumptionStatus } from "@/analytics/fuel-consumption-status";
 import { calculateRolling1000KmConsumption } from "@/analytics/rolling-fuel";
 import { normalizeCountryCode } from "@/analytics/country-normalizer";
 import { classifyRoute } from "@/analytics/route-classifier";
@@ -8,7 +7,6 @@ import { sanitizeTripSegmentsForGpsSpoofing } from "@/analytics/gps-spoofing";
 import { getVehicleDayTripWindow } from "@/analytics/vehicle-day-window";
 import { getServerEnv } from "@/config/env";
 import {
-  getBaselineHistory,
   getRecentTripSegmentsForVehicle,
   upsertDailyTripWithSegments,
   type DailyTripUpsert,
@@ -23,6 +21,7 @@ import { WialonClient } from "@/wialon/client";
 import { parseFuelEvents } from "@/wialon/parsers/fuel-events";
 import {
   parseFuelReport,
+  resolveFuelEventTableIndices,
   shouldLoadFuelChronology,
 } from "@/wialon/parsers/fuel-report";
 import { parseTripsDailyStats, parseTripsReport } from "@/wialon/parsers/trips-report";
@@ -113,7 +112,12 @@ export async function processVehicle(input: {
         interval: reportInterval,
         remoteExec: 1,
       },
-      { client, loadRows: true },
+      {
+        client,
+        loadRows: true,
+        resolveTableIndices: ({ stats, tables }) =>
+          resolveFuelEventTableIndices({ stats, tables: tables ?? [] }),
+      },
     );
 
     const fuelParsed = parseFuelReport({
@@ -174,33 +178,12 @@ export async function processVehicle(input: {
     const highwayRatio =
       mileageKm > 0 ? Math.min(1, Math.max(0, highwayMileageKm / mileageKm)) : null;
 
-    const history = await getBaselineHistory(
-      input.vehicle.id,
-      input.interval.reportDate,
-      env.BASELINE_LOOKBACK_DAYS,
-    );
-    const baseline = calculateDynamicBaseline({
-      history,
-      reportDate: input.interval.reportDate,
-      routeKey: route.routeKey,
-      routeTag: route.routeTag,
-      highwayRatio,
-      config: {
-        lookbackDays: env.BASELINE_LOOKBACK_DAYS,
-        minSamples: env.BASELINE_MIN_SAMPLES,
-        highwayTolerance: env.BASELINE_HIGHWAY_TOLERANCE,
-      },
-    });
-
-    const anomaly = evaluateFuelAnomaly({
-      actualConsumption: fuelParsed.daily.averageFuelConsumptionLPer100Km,
-      baseline,
-      thresholds: {
-        warningPercent: env.ANOMALY_WARNING_PERCENT,
-        criticalPercent: env.ANOMALY_CRITICAL_PERCENT,
-      },
-      dataQualityBlocked,
-    });
+    const fuelStatus = dataQualityBlocked
+      ? "not_evaluated"
+      : evaluateFuelConsumptionStatus(
+          fuelParsed.daily.averageFuelConsumptionLPer100Km,
+          input.vehicle.consumption_tier,
+        );
 
     const fuelEventsParsed = parseFuelEvents(fuelParsed.chronologyRows);
     warnings.push(...fuelEventsParsed.warnings);
@@ -295,13 +278,13 @@ export async function processVehicle(input: {
       end_country_code: route.endCountryCode,
       end_city: route.endCity,
       end_address: route.endAddress,
-      baseline_scope: anomaly.baselineScope,
-      baseline_sample_size: anomaly.baselineSampleSize,
-      baseline_average_l_per_100km: anomaly.baselineAverageLPer100Km,
-      baseline_stddev_l_per_100km: anomaly.baselineStddevLPer100Km,
-      deviation_percent: anomaly.deviationPercent,
-      anomaly_status: anomaly.anomalyStatus,
-      is_anomaly: anomaly.isAnomaly,
+      baseline_scope: null,
+      baseline_sample_size: null,
+      baseline_average_l_per_100km: null,
+      baseline_stddev_l_per_100km: null,
+      deviation_percent: null,
+      anomaly_status: fuelStatus,
+      is_anomaly: fuelStatus === "high",
       movement_duration_seconds: tripsDailyStats.movementDurationSeconds,
       stop_count: tripsDailyStats.stopCount,
       parking_duration_seconds: tripsDailyStats.parkingDurationSeconds,
@@ -359,9 +342,9 @@ export async function processVehicle(input: {
         fuelConsumedL: fuelParsed.daily.fuelConsumedL,
         averageFuelConsumptionLPer100Km:
           fuelParsed.daily.averageFuelConsumptionLPer100Km,
-        deviationPercent: anomaly.deviationPercent,
-        baselineAverageLPer100Km: anomaly.baselineAverageLPer100Km,
-        anomalyStatus: anomaly.anomalyStatus,
+        deviationPercent: null,
+        baselineAverageLPer100Km: null,
+        anomalyStatus: fuelStatus,
         routeKey: route.routeKey,
         highwayRatio,
         firstTripAt: tripWindow.firstTripAt,

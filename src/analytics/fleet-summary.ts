@@ -101,8 +101,8 @@ export function topEfficientVehicles(
     .slice(0, limit);
 }
 
-export function criticalAlerts(
+export function highFuelAlerts(
   vehicles: FleetVehicleSummary[],
 ): FleetVehicleSummary[] {
-  return vehicles.filter((vehicle) => vehicle.anomalyStatus === "critical");
+  return vehicles.filter((vehicle) => vehicle.anomalyStatus === "high");
 }

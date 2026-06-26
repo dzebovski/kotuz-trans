@@ -56,7 +56,7 @@ describe("telegram formatter", () => {
     expect(messages[0]).toContain("23.8 l/100 km");
   });
 
-  it("shows anomaly markers and null-safe fields", () => {
+  it("shows fuel status markers and null-safe fields", () => {
     const messages = formatFleetReport({
       reportDate: "2026-06-14",
       processed: 2,
@@ -71,11 +71,11 @@ describe("telegram formatter", () => {
       vehicles: [
         vehicle({
           displayName: "B truck",
-          anomalyStatus: "critical",
+          anomalyStatus: "high",
         }),
         vehicle({
           displayName: "A truck",
-          anomalyStatus: "warning",
+          anomalyStatus: "avrg",
           routeKey: null,
           fuelConsumedL: null,
           averageFuelConsumptionLPer100Km: null,
@@ -88,7 +88,7 @@ describe("telegram formatter", () => {
     const text = messages.join("\n");
     expect(text.indexOf("A truck")).toBeLessThan(text.indexOf("B truck"));
     expect(text).toContain("🔴");
-    expect(text).toContain("⚠️");
+    expect(text).toContain("🟡");
     expect(text).toContain("Маршрут: —");
     expect(text).toContain("Час: —");
     expect(text).toContain("Паливо: —");

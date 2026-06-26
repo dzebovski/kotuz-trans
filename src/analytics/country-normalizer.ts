@@ -40,7 +40,11 @@ export function normalizeCountryCode(input: string | null | undefined): string |
   }
   const trimmed = input.trim();
   if (/^[A-Z]{2}$/i.test(trimmed)) {
-    return trimmed.toUpperCase();
+    const code = trimmed.toUpperCase();
+    if (code === "UK") {
+      return "GB";
+    }
+    return code;
   }
   const alias = COUNTRY_ALIASES[trimmed.toLowerCase()];
   return alias ?? null;

@@ -14,12 +14,22 @@ import type {
   WialonTableRow,
 } from "./types";
 
+export type FetchRowsOptions = {
+  pageSize?: number;
+  rowSelectLevel?: number;
+};
+
 export type RunReportOptions = {
   client?: WialonClient;
   pollIntervalMs?: number;
   reportTimeoutMs?: number;
   loadRows?: boolean;
+  rowSelectLevel?: number;
   selectRows?: (tableIndex: number, totalRows: number) => Promise<WialonTableRow[]>;
+  resolveTableIndices?: (ctx: {
+    stats: WialonStatRow[];
+    tables: NonNullable<WialonApplyReportResult["reportResult"]>["tables"];
+  }) => number[];
 };
 
 export type RunReportResult = {
@@ -105,12 +115,24 @@ export async function runWialonReport(
 
     let rows: WialonTableRow[] = [];
     if (loadRows && tables.length > 0) {
-      const tableIndex = 0;
-      const totalRows = tables[tableIndex]?.rows ?? 0;
-      if (options.selectRows) {
-        rows = await options.selectRows(tableIndex, totalRows);
-      } else {
-        rows = await fetchAllRows(client, tableIndex, totalRows);
+      const tableIndices =
+        options.resolveTableIndices?.({ stats, tables }) ?? [0];
+      const rowSelectLevel = options.rowSelectLevel ?? 1;
+
+      for (const tableIndex of tableIndices) {
+        const totalRows = tables[tableIndex]?.rows ?? 0;
+        if (totalRows <= 0) {
+          continue;
+        }
+        if (options.selectRows) {
+          rows.push(...(await options.selectRows(tableIndex, totalRows)));
+        } else {
+          rows.push(
+            ...(await fetchAllRows(client, tableIndex, totalRows, {
+              rowSelectLevel,
+            })),
+          );
+        }
       }
     }
 
@@ -133,23 +155,28 @@ export async function fetchAllRows(
   client: WialonClient,
   tableIndex: number,
   totalRows: number,
-  pageSize = 500,
+  options: FetchRowsOptions = {},
 ): Promise<WialonTableRow[]> {
+  const pageSize = options.pageSize ?? 500;
+  const rowSelectLevel = options.rowSelectLevel ?? 1;
   const rows: WialonTableRow[] = [];
   for (let from = 0; from < totalRows; from += pageSize) {
     const to = Math.min(from + pageSize - 1, totalRows - 1);
+    const data: Record<string, number> = {
+      from,
+      to,
+      level: rowSelectLevel,
+      unitInfo: 1,
+    };
+    if (rowSelectLevel !== 0) {
+      data.flat = 1;
+      data.rawValues = 1;
+    }
     const page = await client.call<unknown>("report/select_result_rows", {
       tableIndex,
       config: {
         type: "range",
-        data: {
-          from,
-          to,
-          level: 1,
-          flat: 1,
-          rawValues: 1,
-          unitInfo: 1,
-        },
+        data,
       },
     });
     rows.push(...normalizeSelectRowsResponse(page));

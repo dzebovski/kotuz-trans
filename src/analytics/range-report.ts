@@ -1,3 +1,10 @@
+import {
+  evaluateFuelConsumptionStatus,
+  FUEL_STATUS_RANK,
+  type FuelConsumptionStatus,
+  worstFuelStatus,
+} from "@/analytics/fuel-consumption-status";
+
 export type RangeDailyTrip = {
   id: string;
   reportDate: string;
@@ -6,16 +13,20 @@ export type RangeDailyTrip = {
   averageFuelConsumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number | null;
+  averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number | null;
   maxSpeedKmh: number | null;
-  anomalyStatus: string;
+  refillCount: number;
+  refilledL: number;
+  fuelStatus: FuelConsumptionStatus;
   routeKey: string | null;
   vehicle: {
     id: string;
     displayName: string;
     tractorNumber: string;
     wialonUnitId: number;
+    consumptionTier: 30 | 32 | null;
   };
 };
 
@@ -26,29 +37,36 @@ export type RangeVehicleAggregate = {
   consumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number;
+  averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number;
   maxSpeedKmh: number | null;
-  anomalyStatus: string;
-  anomalyDays: number;
+  refillCount: number;
+  refilledL: number;
+  fuelStatus: FuelConsumptionStatus | null;
+  highDays: number;
   days: RangeDailyTrip[];
 };
 
-const ANOMALY_RANK: Record<string, number> = {
-  not_evaluated: 0,
-  insufficient_history: 1,
-  normal: 2,
-  warning: 3,
-  critical: 4,
-};
-
 export function aggregateTripsByVehicle(
-  trips: RangeDailyTrip[],
+  trips: Array<
+    Omit<RangeDailyTrip, "fuelStatus"> & {
+      fuelStatus?: FuelConsumptionStatus;
+      anomalyStatus?: string;
+    }
+  >,
 ): RangeVehicleAggregate[] {
   const grouped = new Map<string, RangeDailyTrip[]>();
   for (const trip of trips) {
+    const fuelStatus = (trip.fuelStatus ??
+      trip.anomalyStatus ??
+      "not_evaluated") as FuelConsumptionStatus;
+    const normalizedTrip: RangeDailyTrip = {
+      ...trip,
+      fuelStatus,
+    };
     const current = grouped.get(trip.vehicle.id) ?? [];
-    current.push(trip);
+    current.push(normalizedTrip);
     grouped.set(trip.vehicle.id, current);
   }
 
@@ -64,34 +82,45 @@ export function aggregateTripsByVehicle(
       );
       const fuelDays = days.filter((day) => day.fuelConsumedL != null);
       const lastDay = days[days.length - 1];
-      const anomalyStatus = days.reduce(
-        (worst, day) =>
-          (ANOMALY_RANK[day.anomalyStatus] ?? 0) >
-          (ANOMALY_RANK[worst] ?? 0)
-            ? day.anomalyStatus
-            : worst,
-        "not_evaluated",
+      const movementDurationSeconds = days.reduce(
+        (sum, day) => sum + (day.movementDurationSeconds ?? 0),
+        0,
       );
+      const consumptionLPer100Km =
+        mileageKm > 0 && fuelDays.length > 0
+          ? (fuelConsumedL / mileageKm) * 100
+          : null;
+      const periodFuelStatus =
+        mileageKm > 0
+          ? evaluateFuelConsumptionStatus(
+              consumptionLPer100Km,
+              lastDay.vehicle.consumptionTier,
+            )
+          : ("not_evaluated" as FuelConsumptionStatus);
+      const fuelStatus = worstFuelStatus([
+        ...days.map((day) => day.fuelStatus),
+        periodFuelStatus,
+      ]);
 
       return {
         vehicle: lastDay.vehicle,
         mileageKm,
         fuelConsumedL,
-        consumptionLPer100Km:
-          mileageKm > 0 && fuelDays.length > 0
-            ? (fuelConsumedL / mileageKm) * 100
-            : null,
+        consumptionLPer100Km,
         rolling1000KmConsumptionLPer100Km:
           lastDay.rolling1000KmConsumptionLPer100Km,
-        movementDurationSeconds: days.reduce(
-          (sum, day) => sum + (day.movementDurationSeconds ?? 0),
-          0,
-        ),
+        movementDurationSeconds,
+        averageSpeedKmh:
+          movementDurationSeconds > 0
+            ? mileageKm / (movementDurationSeconds / 3600)
+            : null,
         parkingCount: days.reduce((sum, day) => sum + day.parkingCount, 0),
         parkingDurationSeconds: days.reduce(
           (sum, day) => sum + (day.parkingDurationSeconds ?? 0),
           0,
         ),
+        refillCount: days.reduce((sum, day) => sum + day.refillCount, 0),
+        refilledL: days.reduce((sum, day) => sum + day.refilledL, 0),
         maxSpeedKmh: days.reduce<number | null>(
           (maximum, day) =>
             day.maxSpeedKmh == null
@@ -99,12 +128,8 @@ export function aggregateTripsByVehicle(
               : Math.max(maximum ?? 0, day.maxSpeedKmh),
           null,
         ),
-        anomalyStatus,
-        anomalyDays: days.filter(
-          (day) =>
-            day.anomalyStatus === "warning" ||
-            day.anomalyStatus === "critical",
-        ).length,
+        fuelStatus,
+        highDays: days.filter((day) => day.fuelStatus === "high").length,
         days,
       };
     })
@@ -113,3 +138,4 @@ export function aggregateTripsByVehicle(
     );
 }
 
+export { FUEL_STATUS_RANK };

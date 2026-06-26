@@ -79,6 +79,41 @@ export function shouldLoadFuelChronology(stats: ParsedFuelDailyStats): boolean {
   return stats.refillCount > 0 || stats.drainCount > 0;
 }
 
+export function resolveFuelEventTableIndices(input: {
+  stats: WialonStatRow[];
+  tables: Array<{ name?: string; rows?: number }>;
+}): number[] {
+  const daily = parseFuelDailyStats(input.stats);
+  if (!shouldLoadFuelChronology(daily)) {
+    return [];
+  }
+
+  const indices: number[] = [];
+  if (daily.refillCount > 0) {
+    const fillingsIndex = input.tables.findIndex(
+      (table) => table.name === "unit_fillings",
+    );
+    if (fillingsIndex >= 0) {
+      indices.push(fillingsIndex);
+    }
+  }
+
+  if (daily.drainCount > 0) {
+    const chronologyIndex = input.tables.findIndex(
+      (table) => table.name === "unit_chronology",
+    );
+    if (chronologyIndex >= 0 && !indices.includes(chronologyIndex)) {
+      indices.push(chronologyIndex);
+    }
+  }
+
+  if (indices.length === 0) {
+    indices.push(0);
+  }
+
+  return indices;
+}
+
 export type FuelReportParseResult = {
   daily: ParsedFuelDailyStats;
   chronologyRows: WialonTableRow[];

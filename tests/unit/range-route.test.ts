@@ -74,16 +74,20 @@ describe("range GET route", () => {
         averageFuelConsumptionLPer100Km: 25,
         rolling1000KmConsumptionLPer100Km: 24,
         movementDurationSeconds: 3600,
+        averageSpeedKmh: 120,
         parkingCount: 1,
         parkingDurationSeconds: 600,
         maxSpeedKmh: 80,
-        anomalyStatus: "normal",
+        refillCount: 3,
+        refilledL: 245,
+        fuelStatus: "normal",
         routeKey: null,
         vehicle: {
           id: "vehicle-1",
           displayName: "AA1234",
           tractorNumber: "AA1234",
           wialonUnitId: 1,
+          consumptionTier: 30,
         },
       },
     ]);
@@ -95,6 +99,9 @@ describe("range GET route", () => {
     expect(json.ready).toBe(false);
     expect(json.partialReady).toBe(true);
     expect(json.vehicles).toHaveLength(1);
+    expect(json.vehicles[0].refillCount).toBe(3);
+    expect(json.vehicles[0].refilledL).toBe(245);
+    expect(json.vehicles[0].averageSpeedKmh).toBe(120);
     expect(listDailyTripsForDates).toHaveBeenCalledWith(["2026-06-22"]);
     expect(enqueueMissingDatesForRange).not.toHaveBeenCalled();
   });

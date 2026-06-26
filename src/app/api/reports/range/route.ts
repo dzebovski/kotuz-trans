@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { countFuelStatusByVehicle } from "@/analytics/fuel-consumption-status";
 import { aggregateTripsByVehicle } from "@/analytics/range-report";
 import { getServerEnv } from "@/config/env";
 import { listIngestionQueueForRange } from "@/db/ingestion-queue-repository";
@@ -127,12 +128,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               (sum, vehicle) => sum + vehicle.movementDurationSeconds,
               0,
             ),
-            vehiclesOverSpeedLimit: vehicles.filter(
-              (vehicle) => (vehicle.maxSpeedKmh ?? 0) > 86,
-            ).length,
-            anomalyVehicles: vehicles.filter(
-              (vehicle) => vehicle.anomalyDays > 0,
-            ).length,
+            fuelStatusCounts: countFuelStatusByVehicle(vehicles),
           }
         : null;
 

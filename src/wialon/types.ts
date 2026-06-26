@@ -1,4 +1,13 @@
-export type WialonStatCell = string | { t?: string } | null;
+export type WialonGeoCell = {
+  t?: string;
+  v?: number;
+  vt?: number;
+  y?: number;
+  x?: number;
+  u?: number;
+};
+
+export type WialonStatCell = string | WialonGeoCell | null;
 
 export type WialonStatRow = {
   n?: string;

@@ -16,12 +16,17 @@ describe("calculateRolling1000KmConsumption", () => {
     expect(result!.consumptionLPer100Km).toBeCloseTo(24.766, 2);
   });
 
-  it("returns null when any segment fuel is missing", () => {
+  it("skips segments with missing fuel and continues", () => {
     const result = calculateRolling1000KmConsumption([
       { mileage_km: 600, fuel_consumed_l: 150 },
       { mileage_km: 500, fuel_consumed_l: null },
+      { mileage_km: 450, fuel_consumed_l: 110 },
     ]);
-    expect(result).toBeNull();
+
+    expect(result).not.toBeNull();
+    expect(result!.distanceKm).toBe(1050);
+    expect(result!.fuelL).toBe(260);
+    expect(result!.consumptionLPer100Km).toBeCloseTo(24.762, 2);
   });
 
   it("returns null when total distance is below minimum", () => {

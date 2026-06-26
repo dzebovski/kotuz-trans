@@ -58,6 +58,7 @@ const vehicles = [
     display_name: "Truck 101",
     tractor_number: "101",
     trailer_number: null,
+    consumption_tier: null,
     is_active: true,
   },
   {
@@ -66,6 +67,7 @@ const vehicles = [
     display_name: "Truck 102",
     tractor_number: "102",
     trailer_number: null,
+    consumption_tier: null,
     is_active: true,
   },
   {
@@ -74,6 +76,7 @@ const vehicles = [
     display_name: "Truck 103",
     tractor_number: "103",
     trailer_number: null,
+    consumption_tier: null,
     is_active: true,
   },
 ];

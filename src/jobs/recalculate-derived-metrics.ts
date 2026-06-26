@@ -1,67 +1,42 @@
-import { calculateDynamicBaseline } from "@/analytics/baseline";
-import { evaluateFuelAnomaly } from "@/analytics/anomaly";
+import { evaluateFuelConsumptionStatus } from "@/analytics/fuel-consumption-status";
 import { calculateRolling1000KmConsumption } from "@/analytics/rolling-fuel";
-import { getServerEnv } from "@/config/env";
 import {
-  getBaselineHistory,
   getTripSegmentsForVehicleThrough,
   listVehicleDailyTripsAfterDate,
   updateDailyTripDerivedMetrics,
 } from "@/db/trips-repository";
+import { getVehicleById } from "@/db/vehicles-repository";
 
 export async function recalculateVehicleDerivedMetricsAfterDate(input: {
   vehicleId: string;
   changedReportDate: string;
 }): Promise<void> {
-  const env = getServerEnv();
+  const vehicle = await getVehicleById(input.vehicleId);
   const futureTrips = await listVehicleDailyTripsAfterDate(
     input.vehicleId,
     input.changedReportDate,
   );
 
   for (const trip of futureTrips) {
-    const [history, segments] = await Promise.all([
-      getBaselineHistory(
-        input.vehicleId,
-        trip.reportDate,
-        env.BASELINE_LOOKBACK_DAYS,
-      ),
-      getTripSegmentsForVehicleThrough({
-        vehicleId: input.vehicleId,
-        throughEndedAt: trip.intervalEnd,
-      }),
-    ]);
-    const baseline = calculateDynamicBaseline({
-      history,
-      reportDate: trip.reportDate,
-      routeKey: trip.routeKey,
-      routeTag: trip.routeTag,
-      highwayRatio: trip.highwayRatio,
-      config: {
-        lookbackDays: env.BASELINE_LOOKBACK_DAYS,
-        minSamples: env.BASELINE_MIN_SAMPLES,
-        highwayTolerance: env.BASELINE_HIGHWAY_TOLERANCE,
-      },
+    const segments = await getTripSegmentsForVehicleThrough({
+      vehicleId: input.vehicleId,
+      throughEndedAt: trip.intervalEnd,
     });
-    const anomaly = evaluateFuelAnomaly({
-      actualConsumption: trip.averageFuelConsumptionLPer100Km,
-      baseline,
-      thresholds: {
-        warningPercent: env.ANOMALY_WARNING_PERCENT,
-        criticalPercent: env.ANOMALY_CRITICAL_PERCENT,
-      },
-    });
+    const fuelStatus = evaluateFuelConsumptionStatus(
+      trip.averageFuelConsumptionLPer100Km,
+      vehicle?.consumption_tier ?? null,
+    );
     const rolling = calculateRolling1000KmConsumption(segments);
 
     await updateDailyTripDerivedMetrics({
       dailyTripId: trip.id,
-      baselineScope: anomaly.baselineScope,
-      baselineSampleSize: anomaly.baselineSampleSize,
-      baselineAverageLPer100Km: anomaly.baselineAverageLPer100Km,
-      baselineStddevLPer100Km: anomaly.baselineStddevLPer100Km,
-      deviationPercent: anomaly.deviationPercent,
-      anomalyStatus: anomaly.anomalyStatus,
-      isAnomaly: anomaly.isAnomaly,
+      baselineScope: null,
+      baselineSampleSize: null,
+      baselineAverageLPer100Km: null,
+      baselineStddevLPer100Km: null,
+      deviationPercent: null,
+      anomalyStatus: fuelStatus,
+      isAnomaly: fuelStatus === "high",
       rollingDistanceKm: rolling?.distanceKm ?? null,
       rollingFuelL: rolling?.fuelL ?? null,
       rollingConsumptionLPer100Km: rolling?.consumptionLPer100Km ?? null,

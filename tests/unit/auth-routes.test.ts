@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { isAuthPage, isProtectedPath } from "@/lib/auth/routes";
 
 describe("auth route matching", () => {
-  it("protects home and reports API", () => {
+  it("protects home, vehicles and reports API", () => {
     expect(isProtectedPath("/")).toBe(true);
+    expect(isProtectedPath("/vehicles/abc-123")).toBe(true);
     expect(isProtectedPath("/api/reports/daily")).toBe(true);
     expect(isProtectedPath("/api/reports/weekly")).toBe(true);
   });

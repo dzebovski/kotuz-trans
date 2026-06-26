@@ -1,5 +1,6 @@
 import type { BaselineHistoryRow } from "@/analytics/baseline";
 import type { RangeDailyTrip } from "@/analytics/range-report";
+import type { VehicleFuelRefill, VehicleTripSegment } from "@/lib/report/types";
 import { getSupabaseAdmin } from "./supabase-admin";
 
 export type DailyTripUpsert = {
@@ -90,6 +91,10 @@ export type FuelEventUpsert = {
   source_row_number: number | null;
   raw_event: Record<string, unknown>;
 };
+
+function firstRelation<T>(relation: T | T[] | null | undefined): T | null {
+  return Array.isArray(relation) ? (relation[0] ?? null) : (relation ?? null);
+}
 
 export async function getBaselineHistory(
   vehicleId: string,
@@ -469,16 +474,20 @@ export async function listDailyTripsForDates(
       average_fuel_consumption_l_per_100km,
       rolling_1000km_consumption_l_per_100km,
       movement_duration_seconds,
+      average_speed_kmh,
       parking_count_from_trips,
       parking_duration_seconds,
       max_speed_kmh,
+      refill_count,
+      refilled_l,
       anomaly_status,
       route_key,
       vehicles!inner (
         id,
         display_name,
         tractor_number,
-        wialon_unit_id
+        wialon_unit_id,
+        consumption_tier
       )
     `,
     )
@@ -495,6 +504,7 @@ export async function listDailyTripsForDates(
       display_name: string;
       tractor_number: string;
       wialon_unit_id: number;
+      consumption_tier: 30 | 32 | null;
     };
     return {
       id: row.id as string,
@@ -512,18 +522,23 @@ export async function listDailyTripsForDates(
           : Number(row.rolling_1000km_consumption_l_per_100km),
       movementDurationSeconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      averageSpeedKmh:
+        row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
       parkingCount: Number(row.parking_count_from_trips ?? 0),
       parkingDurationSeconds:
         (row.parking_duration_seconds as number | null) ?? null,
       maxSpeedKmh:
         row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
-      anomalyStatus: row.anomaly_status as string,
+      refillCount: Number(row.refill_count ?? 0),
+      refilledL: Number(row.refilled_l ?? 0),
+      fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
       vehicle: {
         id: vehicle.id,
         displayName: vehicle.display_name,
         tractorNumber: vehicle.tractor_number,
         wialonUnitId: Number(vehicle.wialon_unit_id),
+        consumptionTier: (vehicle.consumption_tier as 30 | 32 | null) ?? null,
       },
     };
   });
@@ -544,16 +559,20 @@ export async function listDailyTripsForRange(
       average_fuel_consumption_l_per_100km,
       rolling_1000km_consumption_l_per_100km,
       movement_duration_seconds,
+      average_speed_kmh,
       parking_count_from_trips,
       parking_duration_seconds,
       max_speed_kmh,
+      refill_count,
+      refilled_l,
       anomaly_status,
       route_key,
       vehicles!inner (
         id,
         display_name,
         tractor_number,
-        wialon_unit_id
+        wialon_unit_id,
+        consumption_tier
       )
     `,
     )
@@ -571,6 +590,7 @@ export async function listDailyTripsForRange(
       display_name: string;
       tractor_number: string;
       wialon_unit_id: number;
+      consumption_tier: 30 | 32 | null;
     };
     return {
       id: row.id as string,
@@ -588,18 +608,23 @@ export async function listDailyTripsForRange(
           : Number(row.rolling_1000km_consumption_l_per_100km),
       movementDurationSeconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      averageSpeedKmh:
+        row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
       parkingCount: Number(row.parking_count_from_trips ?? 0),
       parkingDurationSeconds:
         (row.parking_duration_seconds as number | null) ?? null,
       maxSpeedKmh:
         row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
-      anomalyStatus: row.anomaly_status as string,
+      refillCount: Number(row.refill_count ?? 0),
+      refilledL: Number(row.refilled_l ?? 0),
+      fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
       vehicle: {
         id: vehicle.id,
         displayName: vehicle.display_name,
         tractorNumber: vehicle.tractor_number,
         wialonUnitId: Number(vehicle.wialon_unit_id),
+        consumptionTier: (vehicle.consumption_tier as 30 | 32 | null) ?? null,
       },
     };
   });
@@ -644,6 +669,149 @@ export async function listTripSegmentsForDailyTrip(dailyTripId: string) {
     end_address: (row.end_address as string | null) ?? null,
     is_local_maneuver: Boolean(row.is_local_maneuver),
   }));
+}
+
+export async function listTripSegmentsForVehicleRange(input: {
+  vehicleId: string;
+  from: string;
+  to: string;
+}): Promise<VehicleTripSegment[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("trip_segments")
+    .select(
+      `
+      id,
+      daily_trip_id,
+      started_at,
+      ended_at,
+      duration_seconds,
+      mileage_km,
+      fuel_consumed_l,
+      average_fuel_consumption_l_per_100km,
+      average_speed_kmh,
+      max_speed_kmh,
+      start_latitude,
+      start_longitude,
+      start_address,
+      end_latitude,
+      end_longitude,
+      end_address,
+      is_local_maneuver,
+      daily_trips!inner (
+        id,
+        report_date,
+        vehicle_id
+      )
+    `,
+    )
+    .eq("daily_trips.vehicle_id", input.vehicleId)
+    .gte("daily_trips.report_date", input.from)
+    .lte("daily_trips.report_date", input.to)
+    .order("started_at");
+
+  if (error) {
+    throw new Error(`Failed to load vehicle trip segments: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const dailyTrip = firstRelation(
+      row.daily_trips as
+        | { id: string; report_date: string; vehicle_id: string }
+        | Array<{ id: string; report_date: string; vehicle_id: string }>
+        | null,
+    );
+    if (!dailyTrip) {
+      throw new Error("Trip segment is missing daily trip relation");
+    }
+
+    return {
+      id: row.id as string,
+      dailyTripId: row.daily_trip_id as string,
+      reportDate: dailyTrip.report_date,
+      startedAt: row.started_at as string,
+      endedAt: row.ended_at as string,
+      durationSeconds: (row.duration_seconds as number | null) ?? null,
+      mileageKm: Number(row.mileage_km),
+      fuelConsumedL:
+        row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+      averageFuelConsumptionLPer100Km:
+        row.average_fuel_consumption_l_per_100km == null
+          ? null
+          : Number(row.average_fuel_consumption_l_per_100km),
+      averageSpeedKmh:
+        row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
+      maxSpeedKmh:
+        row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
+      startLatitude:
+        row.start_latitude == null ? null : Number(row.start_latitude),
+      startLongitude:
+        row.start_longitude == null ? null : Number(row.start_longitude),
+      startAddress: (row.start_address as string | null) ?? null,
+      endLatitude: row.end_latitude == null ? null : Number(row.end_latitude),
+      endLongitude:
+        row.end_longitude == null ? null : Number(row.end_longitude),
+      endAddress: (row.end_address as string | null) ?? null,
+      isLocalManeuver: Boolean(row.is_local_maneuver),
+    };
+  });
+}
+
+export async function listFuelRefillsForVehicleRange(input: {
+  vehicleId: string;
+  from: string;
+  to: string;
+}): Promise<VehicleFuelRefill[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("fuel_events")
+    .select(
+      `
+      id,
+      daily_trip_id,
+      event_time,
+      volume_l,
+      latitude,
+      longitude,
+      address,
+      daily_trips!inner (
+        id,
+        report_date,
+        vehicle_id
+      )
+    `,
+    )
+    .eq("vehicle_id", input.vehicleId)
+    .eq("event_type", "refill")
+    .eq("daily_trips.vehicle_id", input.vehicleId)
+    .gte("daily_trips.report_date", input.from)
+    .lte("daily_trips.report_date", input.to)
+    .order("event_time");
+
+  if (error) {
+    throw new Error(`Failed to load vehicle fuel refills: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const dailyTrip = firstRelation(
+      row.daily_trips as
+        | { id: string; report_date: string; vehicle_id: string }
+        | Array<{ id: string; report_date: string; vehicle_id: string }>
+        | null,
+    );
+    if (!dailyTrip) {
+      throw new Error("Fuel refill is missing daily trip relation");
+    }
+
+    return {
+      id: row.id as string,
+      dailyTripId: row.daily_trip_id as string,
+      reportDate: dailyTrip.report_date,
+      eventTime: row.event_time as string,
+      volumeL: Number(row.volume_l),
+      latitude: row.latitude == null ? null : Number(row.latitude),
+      longitude: row.longitude == null ? null : Number(row.longitude),
+      address: (row.address as string | null) ?? null,
+    };
+  });
 }
 
 export async function upsertDailyTripWithSegments(input: {
@@ -718,61 +886,22 @@ export async function upsertDailyTripWithSegments(input: {
     }
   }
 
+  const { error: clearFuelError } = await supabase
+    .from("fuel_events")
+    .delete()
+    .eq("daily_trip_id", dailyTripId);
+  if (clearFuelError) {
+    throw new Error(`Failed to clear fuel events: ${clearFuelError.message}`);
+  }
+
   if (input.fuelEvents.length > 0) {
     const fuelRows = input.fuelEvents.map((event) => ({
       ...event,
       daily_trip_id: dailyTripId,
     }));
-    const { error: fuelError } = await supabase
-      .from("fuel_events")
-      .upsert(fuelRows, {
-        onConflict: "vehicle_id,event_type,event_time,volume_l",
-      });
+    const { error: fuelError } = await supabase.from("fuel_events").insert(fuelRows);
     if (fuelError) {
-      throw new Error(`Failed to upsert fuel events: ${fuelError.message}`);
-    }
-
-    const keepKeys = new Set(
-      input.fuelEvents.map(
-        (event) =>
-          `${event.vehicle_id}:${event.event_type}:${event.event_time}:${event.volume_l}`,
-      ),
-    );
-    const { data: existingFuelEvents, error: existingFuelError } = await supabase
-      .from("fuel_events")
-      .select("id,vehicle_id,event_type,event_time,volume_l")
-      .eq("daily_trip_id", dailyTripId);
-    if (existingFuelError) {
-      throw new Error(
-        `Failed to read existing fuel events: ${existingFuelError.message}`,
-      );
-    }
-    const staleFuelEventIds = (existingFuelEvents ?? [])
-      .filter(
-        (event) =>
-          !keepKeys.has(
-            `${event.vehicle_id as string}:${event.event_type as string}:${event.event_time as string}:${Number(event.volume_l)}`,
-          ),
-      )
-      .map((event) => event.id as string);
-    if (staleFuelEventIds.length > 0) {
-      const { error: deleteFuelError } = await supabase
-        .from("fuel_events")
-        .delete()
-        .in("id", staleFuelEventIds);
-      if (deleteFuelError) {
-        throw new Error(
-          `Failed to delete stale fuel events: ${deleteFuelError.message}`,
-        );
-      }
-    }
-  } else {
-    const { error: deleteFuelError } = await supabase
-      .from("fuel_events")
-      .delete()
-      .eq("daily_trip_id", dailyTripId);
-    if (deleteFuelError) {
-      throw new Error(`Failed to clear fuel events: ${deleteFuelError.message}`);
+      throw new Error(`Failed to insert fuel events: ${fuelError.message}`);
     }
   }
 

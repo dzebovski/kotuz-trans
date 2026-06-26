@@ -3,7 +3,13 @@ import {
   extractCityFromAddress,
   extractCountryFromAddress,
 } from "@/analytics/country-normalizer";
-import type { WialonStatCell } from "../types";
+import type { WialonGeoCell, WialonStatCell } from "../types";
+
+const DATETIME_CELL_PATTERN = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
+
+function isGeoCell(cell: WialonStatCell): cell is WialonGeoCell {
+  return typeof cell === "object" && cell != null;
+}
 
 export function cellToString(cell: WialonStatCell): string {
   if (cell == null) {
@@ -13,6 +19,50 @@ export function cellToString(cell: WialonStatCell): string {
     return cell;
   }
   return cell.t ?? "";
+}
+
+export type ParsedGeoCell = {
+  time: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  raw: string;
+};
+
+export function parseGeoCell(cell: WialonStatCell): ParsedGeoCell {
+  if (cell == null) {
+    return {
+      time: null,
+      latitude: null,
+      longitude: null,
+      address: null,
+      raw: "",
+    };
+  }
+
+  if (typeof cell === "string") {
+    const parsed = parseCoordinateAddressCell(cell);
+    return {
+      time: parsed.time,
+      latitude: parsed.latitude,
+      longitude: parsed.longitude,
+      address: parsed.address,
+      raw: cell,
+    };
+  }
+
+  const raw = cell.t?.trim() ?? "";
+  const latitude = typeof cell.y === "number" ? cell.y : null;
+  const longitude = typeof cell.x === "number" ? cell.x : null;
+  const isTime = DATETIME_CELL_PATTERN.test(raw);
+
+  return {
+    time: isTime ? raw : null,
+    latitude,
+    longitude,
+    address: !isTime && raw.includes(",") ? raw : null,
+    raw,
+  };
 }
 
 export function parseLabeledStats(
@@ -56,6 +106,19 @@ export type ParsedCoordinateAddress = {
 export function parseCoordinateAddressCell(
   cell: WialonStatCell,
 ): ParsedCoordinateAddress {
+  if (isGeoCell(cell) && (cell.y != null || cell.x != null)) {
+    const geo = parseGeoCell(cell);
+    return {
+      time: geo.time,
+      latitude: geo.latitude,
+      longitude: geo.longitude,
+      address: geo.address,
+      city: geo.address ? extractCityFromAddress(geo.address) : null,
+      country: geo.address ? extractCountryFromAddress(geo.address) : null,
+      raw: geo.raw,
+    };
+  }
+
   const raw = cellToString(cell);
   const lines = raw
     .split("\n")

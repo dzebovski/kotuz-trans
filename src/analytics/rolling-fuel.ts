@@ -24,7 +24,7 @@ export function calculateRolling1000KmConsumption(
 
   for (const segment of segmentsNewestFirst) {
     if (segment.fuel_consumed_l == null) {
-      return null;
+      continue;
     }
     distanceKm += segment.mileage_km;
     fuelL += segment.fuel_consumed_l;

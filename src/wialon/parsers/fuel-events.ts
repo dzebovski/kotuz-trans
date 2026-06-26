@@ -1,6 +1,10 @@
 import { parseValueWithUnit } from "@/utils/numbers";
-import { cellToString, parseCoordinateAddressCell } from "./common";
-import type { WialonTableRow } from "../types";
+import {
+  cellToString,
+  parseCoordinateAddressCell,
+  parseGeoCell,
+} from "./common";
+import type { WialonStatCell, WialonTableRow } from "../types";
 
 export type FuelEventType = "refill" | "drain";
 
@@ -26,6 +30,7 @@ const DRAIN_PATTERNS = [
   /drain/i,
   /theft/i,
 ];
+const SKIP_CHRONOLOGY_TYPES = [/^trip$/i, /^стоян/i, /^parking$/i];
 
 function detectEventType(typeCell: string): FuelEventType | null {
   if (REFILL_PATTERNS.some((pattern) => pattern.test(typeCell))) {
@@ -35,6 +40,10 @@ function detectEventType(typeCell: string): FuelEventType | null {
     return "drain";
   }
   return null;
+}
+
+function shouldSkipChronologyRow(typeCell: string): boolean {
+  return SKIP_CHRONOLOGY_TYPES.some((pattern) => pattern.test(typeCell.trim()));
 }
 
 function extractVolume(description: string, notes: string): number | null {
@@ -51,6 +60,95 @@ function extractVolume(description: string, notes: string): number | null {
   return null;
 }
 
+function isStructuredFillingRow(cells: WialonStatCell[]): boolean {
+  if (cells.length < 6) {
+    return false;
+  }
+  const volumeL = parseValueWithUnit(cells[5] ?? null).value;
+  const fuelBeforeL = parseValueWithUnit(cells[3] ?? null).value;
+  const fuelAfterL = parseValueWithUnit(cells[4] ?? null).value;
+  if (volumeL == null || volumeL <= 0) {
+    return false;
+  }
+  return fuelBeforeL != null && fuelAfterL != null;
+}
+
+function parseStructuredFillingRow(row: WialonTableRow): ParsedFuelEvent | null {
+  const cells = row.c ?? [];
+  if (!isStructuredFillingRow(cells)) {
+    return null;
+  }
+
+  const timeCell = parseGeoCell(cells[1] ?? null);
+  const locationCell = parseGeoCell(cells[2] ?? null);
+  const fuelBeforeL = parseValueWithUnit(cells[3] ?? null).value;
+  const fuelAfterL = parseValueWithUnit(cells[4] ?? null).value;
+  const volumeL = parseValueWithUnit(cells[5] ?? null).value;
+
+  if (!timeCell.time || volumeL == null || volumeL <= 0) {
+    return null;
+  }
+
+  const latitude = timeCell.latitude ?? locationCell.latitude;
+  const longitude = timeCell.longitude ?? locationCell.longitude;
+  const address =
+    locationCell.address ??
+    (locationCell.raw && locationCell.raw.includes(",") ? locationCell.raw : null);
+
+  return {
+    eventType: "refill",
+    eventTime: timeCell.time,
+    volumeL,
+    latitude,
+    longitude,
+    address,
+    sourceRowNumber: row.n ?? 0,
+    rawEvent: {
+      format: "unit_fillings",
+      sequence: cellToString(cells[0] ?? null),
+      fuelBeforeL,
+      fuelAfterL,
+    },
+  };
+}
+
+function parseChronologyFuelEventRow(row: WialonTableRow): ParsedFuelEvent | null {
+  const cells = row.c ?? [];
+  const typeCell = cellToString(cells[0] ?? null);
+  if (shouldSkipChronologyRow(typeCell)) {
+    return null;
+  }
+
+  const eventType = detectEventType(typeCell);
+  if (!eventType) {
+    return null;
+  }
+
+  const start = parseCoordinateAddressCell(cells[1] ?? null);
+  const description = cellToString(cells[6] ?? null);
+  const notes = cellToString(cells[7] ?? null);
+  const volumeL = extractVolume(description, notes);
+  if (!start.time || volumeL == null) {
+    return null;
+  }
+
+  return {
+    eventType,
+    eventTime: start.time,
+    volumeL,
+    latitude: start.latitude,
+    longitude: start.longitude,
+    address: start.address,
+    sourceRowNumber: row.n ?? 0,
+    rawEvent: {
+      format: "unit_chronology",
+      type: typeCell,
+      description,
+      notes,
+    },
+  };
+}
+
 export function parseFuelEvents(
   rows: WialonTableRow[],
 ): { events: ParsedFuelEvent[]; warnings: string[] } {
@@ -58,39 +156,22 @@ export function parseFuelEvents(
   const warnings: string[] = [];
 
   for (const row of rows) {
-    const cells = row.c ?? [];
-    const typeCell = cellToString(cells[0] ?? null);
-    const eventType = detectEventType(typeCell);
-    if (!eventType) {
+    const structured = parseStructuredFillingRow(row);
+    if (structured) {
+      events.push(structured);
+      continue;
+    }
+
+    const chronology = parseChronologyFuelEventRow(row);
+    if (chronology) {
+      events.push(chronology);
+      continue;
+    }
+
+    const typeCell = cellToString(row.c?.[0] ?? null);
+    if (typeCell && !shouldSkipChronologyRow(typeCell) && !/^\d+$/.test(typeCell.trim())) {
       warnings.push(`Unknown fuel event type in row ${row.n ?? "?"}`);
-      continue;
     }
-
-    const start = parseCoordinateAddressCell(cells[1] ?? null);
-    const description = cellToString(cells[6] ?? null);
-    const notes = cellToString(cells[7] ?? null);
-    const volumeL = extractVolume(description, notes);
-    if (!start.time || volumeL == null) {
-      warnings.push(
-        `Skipped fuel event row ${row.n ?? "?"}: missing time or volume`,
-      );
-      continue;
-    }
-
-    events.push({
-      eventType,
-      eventTime: start.time,
-      volumeL,
-      latitude: start.latitude,
-      longitude: start.longitude,
-      address: start.address,
-      sourceRowNumber: row.n ?? events.length,
-      rawEvent: {
-        type: typeCell,
-        description,
-        notes,
-      },
-    });
   }
 
   return { events, warnings };

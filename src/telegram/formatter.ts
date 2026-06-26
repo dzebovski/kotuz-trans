@@ -17,12 +17,12 @@ function formatNullableNumber(value: number | null, suffix = ""): string {
   return `${formatNumber(value)}${suffix}`;
 }
 
-function anomalyMarker(status: string): string {
-  if (status === "critical") {
+function fuelMarker(status: string): string {
+  if (status === "high") {
     return " 🔴";
   }
-  if (status === "warning") {
-    return " ⚠️";
+  if (status === "avrg") {
+    return " 🟡";
   }
   return "";
 }
@@ -33,7 +33,7 @@ function formatVehicleBlock(
 ): string[] {
   const lines: string[] = [];
   lines.push(
-    `<b>${escapeHtml(vehicle.displayName)}</b>${anomalyMarker(vehicle.anomalyStatus)}`,
+    `<b>${escapeHtml(vehicle.displayName)}</b>${fuelMarker(vehicle.anomalyStatus)}`,
   );
   lines.push(
     `Маршрут: ${vehicle.routeKey ? escapeHtml(vehicle.routeKey) : "—"}`,

@@ -9,6 +9,7 @@ describe("country-normalizer", () => {
   it("normalizes common country names", () => {
     expect(normalizeCountryCode("Netherlands")).toBe("NL");
     expect(normalizeCountryCode("United Kingdom")).toBe("GB");
+    expect(normalizeCountryCode("UK")).toBe("GB");
     expect(normalizeCountryCode("Czech Republic")).toBe("CZ");
   });
 

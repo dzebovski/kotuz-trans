@@ -1,5 +1,8 @@
 export function isProtectedPath(pathname: string): boolean {
-  if (pathname === "/") {
+  if (pathname === "/" || pathname === "/design") {
+    return true;
+  }
+  if (pathname.startsWith("/vehicles")) {
     return true;
   }
   return pathname.startsWith("/api/reports");
