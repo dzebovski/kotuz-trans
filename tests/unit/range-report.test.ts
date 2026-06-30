@@ -21,6 +21,8 @@ function trip(
     refilledL: 0,
     fuelStatus: "normal",
     routeKey: null,
+    startCountryCode: null,
+    endCountryCode: null,
     vehicle: {
       id: "vehicle-1",
       displayName: "Truck 1",

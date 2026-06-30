@@ -60,4 +60,17 @@ describe("country-normalizer", () => {
       ),
     ).toBe("UA");
   });
+
+  it("extracts city from Ukrainian addresses with km-from postal-only suffix", () => {
+    expect(
+      extractCityFromAddress(
+        "Україна, Пирятинська ТГ, Лубенський р-н, Полтавська обл., М-03, 0.35 km from 37044",
+      ),
+    ).toBe("Пирятинська ТГ");
+    expect(
+      extractCityFromAddress(
+        "Україна, Яворівська ТГ, Яворівський р-н, Львівська обл., М-10, 1.05 km from Глиниці 81035",
+      ),
+    ).toBe("1.05 km from Глиниці 81035");
+  });
 });

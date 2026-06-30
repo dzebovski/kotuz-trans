@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPeriodRouteCountries,
+  buildPeriodRouteEndpoints,
   countryCodeToFlag,
   formatRouteFlags,
   parseRouteKeyCountries,
@@ -48,6 +49,39 @@ describe("buildPeriodRouteCountries", () => {
   });
 });
 
+describe("buildPeriodRouteEndpoints", () => {
+  it("uses first start and last end across days", () => {
+    expect(
+      buildPeriodRouteEndpoints([
+        {
+          reportDate: "2026-06-01",
+          mileageKm: 100,
+          routeKey: "UA:KYIV>PL:WARSZAWA",
+        },
+        {
+          reportDate: "2026-06-02",
+          mileageKm: 200,
+          routeKey: "PL:WARSZAWA>DE:BERLIN",
+        },
+      ]),
+    ).toEqual({ start: "UA", end: "DE" });
+  });
+
+  it("falls back to country codes when route key is missing", () => {
+    expect(
+      buildPeriodRouteEndpoints([
+        {
+          reportDate: "2026-06-01",
+          mileageKm: 100,
+          routeKey: null,
+          startCountryCode: "UA",
+          endCountryCode: "UA",
+        },
+      ]),
+    ).toEqual({ start: "UA", end: "UA" });
+  });
+});
+
 describe("formatRouteFlags", () => {
   it("shows only first and last countries when period has more than two", () => {
     expect(
@@ -78,7 +112,7 @@ describe("formatRouteFlags", () => {
     ).toBe("🇺🇦 → 🇵🇱");
   });
 
-  it("keeps one-country route visible", () => {
+  it("shows both flags for domestic Ukraine route", () => {
     expect(
       formatRouteFlags([
         {
@@ -87,7 +121,21 @@ describe("formatRouteFlags", () => {
           routeKey: "UA:KYIV>UA:LVIV",
         },
       ]),
-    ).toBe("🇺🇦");
+    ).toBe("🇺🇦 → 🇺🇦");
+  });
+
+  it("shows UA flags from country codes when route key is missing", () => {
+    expect(
+      formatRouteFlags([
+        {
+          reportDate: "2026-06-01",
+          mileageKm: 872,
+          routeKey: null,
+          startCountryCode: "UA",
+          endCountryCode: "UA",
+        },
+      ]),
+    ).toBe("🇺🇦 → 🇺🇦");
   });
 
   it("returns dash when no movement", () => {

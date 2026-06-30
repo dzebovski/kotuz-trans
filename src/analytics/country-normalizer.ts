@@ -85,24 +85,47 @@ export function extractCityFromAddress(address: string | null): string | null {
   }
 
   if (countryIndexes.length >= 1 && countryIndexes[0] === 0) {
+    const countryCode = normalizeCountryCode(parts[0]);
     for (let index = parts.length - 1; index > 0; index -= 1) {
       const part = parts[index];
-      if (normalizeCountryCode(part)) {
+      if (isSkippableAddressPart(part, countryCode)) {
         continue;
       }
-      if (/^A\d+$/i.test(part)) {
-        continue;
-      }
-      if (/^\d+([.,]\d+)?$/.test(part)) {
-        continue;
-      }
-      if (part.length >= 2) {
+      if (normalizePlaceName(part, countryCode)) {
         return part;
       }
     }
   }
 
   return parts[0];
+}
+
+function isSkippableAddressPart(
+  part: string,
+  countryCode: string | null,
+): boolean {
+  if (normalizeCountryCode(part)) {
+    return true;
+  }
+  if (/^[A-Za-zА-Яа-яІіЇїЄєҐґ]-\d+/.test(part)) {
+    return true;
+  }
+  if (/^A\d+$/i.test(part)) {
+    return true;
+  }
+  if (/^O-\d+/i.test(part)) {
+    return true;
+  }
+  if (/^\d+([.,]\d+)?$/.test(part)) {
+    return true;
+  }
+  if (part.length < 2) {
+    return true;
+  }
+  if (countryCode === "UA" && /(обл|р-н)\.?$/i.test(part)) {
+    return true;
+  }
+  return false;
 }
 
 export function normalizePlaceName(

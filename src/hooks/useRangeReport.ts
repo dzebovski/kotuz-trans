@@ -28,6 +28,7 @@ import type {
 type UseRangeReportOptions = {
   initialFrom: string;
   initialTo: string;
+  urlRangeReady?: boolean;
   onRangeApplied?: (from: string, to: string) => void;
 };
 
@@ -36,6 +37,7 @@ const STUCK_IDLE_KICK_THRESHOLD = 3;
 export function useRangeReport({
   initialFrom,
   initialTo,
+  urlRangeReady = true,
   onRangeApplied,
 }: UseRangeReportOptions) {
   const [draftFrom, setDraftFrom] = useState(initialFrom);
@@ -55,11 +57,11 @@ export function useRangeReport({
   const pollingRef = useRef(false);
   const kickInFlightRef = useRef(false);
   const inflightLoadRef = useRef<Promise<RangeResponse | null> | null>(null);
-  const initialLoadKeyRef = useRef<string | null>(null);
   const readyCountRef = useRef(0);
   const idleKickCountRef = useRef(0);
   const rangeKeyRef = useRef(toRangeKey(initialFrom, initialTo));
   const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const fromRef = useRef(from);
   const toRef = useRef(to);
 
@@ -68,6 +70,20 @@ export function useRangeReport({
   toRef.current = to;
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      inflightLoadRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!urlRangeReady) {
+      return;
+    }
+    if (initialFrom === fromRef.current && initialTo === toRef.current) {
+      return;
+    }
     setDraftFrom(initialFrom);
     setDraftTo(initialTo);
     setFrom(initialFrom);
@@ -78,20 +94,21 @@ export function useRangeReport({
     setLastIdleReason(null);
     setStuck(false);
     idleKickCountRef.current = 0;
-  }, [initialFrom, initialTo]);
+  }, [initialFrom, initialTo, urlRangeReady]);
 
   useEffect(() => {
     abortControllerRef.current?.abort();
+    inflightLoadRef.current = null;
     const controller = new AbortController();
     abortControllerRef.current = controller;
     rangeKeyRef.current = toRangeKey(from, to);
     idleKickCountRef.current = 0;
-    initialLoadKeyRef.current = null;
     setStuck(false);
     setLastIdleReason(null);
 
     return () => {
       controller.abort();
+      inflightLoadRef.current = null;
     };
   }, [from, to]);
 
@@ -155,7 +172,11 @@ export function useRangeReport({
           );
           return null;
         } finally {
-          if (!silent && isCurrentRange(requestFrom, requestTo, rangeKey)) {
+          if (
+            !silent &&
+            mountedRef.current &&
+            isCurrentRange(requestFrom, requestTo, rangeKey)
+          ) {
             setLoading(false);
           }
         }
@@ -220,13 +241,18 @@ export function useRangeReport({
   }, [from, to, isCurrentRange, load]);
 
   useEffect(() => {
-    const key = toRangeKey(from, to);
-    if (initialLoadKeyRef.current === key) {
-      return;
-    }
-    initialLoadKeyRef.current = key;
     void load();
   }, [from, load, to]);
+
+  useEffect(() => {
+    if (!urlRangeReady) {
+      return;
+    }
+    if (data !== null || loading || error) {
+      return;
+    }
+    void load();
+  }, [urlRangeReady, data, loading, error, load, from, to]);
 
   const kickNextQueuedDate = useCallback(async (): Promise<RunRangeResponse> => {
     const response = await fetch("/api/reports/range/run", {

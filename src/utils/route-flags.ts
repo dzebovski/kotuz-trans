@@ -6,6 +6,8 @@ export type RouteDay = {
   reportDate: string;
   mileageKm: number;
   routeKey: string | null;
+  startCountryCode?: string | null;
+  endCountryCode?: string | null;
 };
 
 export function countryCodeToFlag(code: string | null | undefined): string | null {
@@ -55,6 +57,48 @@ export function parseRouteKeyCountries(
   return { start: startCode, end: endCode };
 }
 
+function resolveDayRouteCountries(
+  day: RouteDay,
+): { start: string; end: string } | null {
+  const fromKey = parseRouteKeyCountries(day.routeKey);
+  const start =
+    fromKey?.start ?? normalizeCountryCode(day.startCountryCode ?? null);
+  const end = fromKey?.end ?? normalizeCountryCode(day.endCountryCode ?? null);
+  if (!start && !end) {
+    return null;
+  }
+  return {
+    start: start ?? end!,
+    end: end ?? start!,
+  };
+}
+
+export function buildPeriodRouteEndpoints(
+  days: RouteDay[],
+): { start: string; end: string } | null {
+  const sorted = [...days].sort((a, b) =>
+    a.reportDate.localeCompare(b.reportDate),
+  );
+  let start: string | null = null;
+  let end: string | null = null;
+
+  for (const day of sorted) {
+    const countries = resolveDayRouteCountries(day);
+    if (!countries) {
+      continue;
+    }
+    if (!start) {
+      start = countries.start;
+    }
+    end = countries.end;
+  }
+
+  if (!start || !end) {
+    return null;
+  }
+  return { start, end };
+}
+
 export function buildPeriodRouteCountries(days: RouteDay[]): string[] {
   const sorted = [...days].sort((a, b) =>
     a.reportDate.localeCompare(b.reportDate),
@@ -62,7 +106,7 @@ export function buildPeriodRouteCountries(days: RouteDay[]): string[] {
   const sequence: string[] = [];
 
   for (const day of sorted) {
-    const countries = parseRouteKeyCountries(day.routeKey);
+    const countries = resolveDayRouteCountries(day);
     if (!countries) {
       continue;
     }
@@ -85,19 +129,14 @@ export function formatRouteFlags(days: RouteDay[]): string {
   if (totalMileage <= 0) {
     return "—";
   }
-  const countries = buildPeriodRouteCountries(days);
-  if (countries.length === 0) {
+  const endpoints = buildPeriodRouteEndpoints(days);
+  if (!endpoints) {
     return "—";
   }
-  const displayCountries =
-    countries.length > 2
-      ? [countries[0], countries[countries.length - 1]]
-      : countries;
-  const flags = displayCountries
-    .map((code) => countryCodeToFlag(code))
-    .filter((flag): flag is string => Boolean(flag));
-  if (flags.length === 0) {
+  const startFlag = countryCodeToFlag(endpoints.start);
+  const endFlag = countryCodeToFlag(endpoints.end);
+  if (!startFlag || !endFlag) {
     return "—";
   }
-  return flags.join(" → ");
+  return `${startFlag} → ${endFlag}`;
 }

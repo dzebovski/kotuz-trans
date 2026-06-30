@@ -21,6 +21,8 @@ export type RangeDailyTrip = {
   refilledL: number;
   fuelStatus: FuelConsumptionStatus;
   routeKey: string | null;
+  startCountryCode: string | null;
+  endCountryCode: string | null;
   vehicle: {
     id: string;
     displayName: string;

@@ -46,6 +46,8 @@ export type RangeDay = {
   refilledL: number;
   fuelStatus: string;
   routeKey: string | null;
+  startCountryCode: string | null;
+  endCountryCode: string | null;
 };
 
 export type RangeVehicle = {

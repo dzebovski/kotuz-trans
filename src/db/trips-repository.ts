@@ -482,6 +482,8 @@ export async function listDailyTripsForDates(
       refilled_l,
       anomaly_status,
       route_key,
+      start_country_code,
+      end_country_code,
       vehicles!inner (
         id,
         display_name,
@@ -533,6 +535,8 @@ export async function listDailyTripsForDates(
       refilledL: Number(row.refilled_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
+      startCountryCode: (row.start_country_code as string | null) ?? null,
+      endCountryCode: (row.end_country_code as string | null) ?? null,
       vehicle: {
         id: vehicle.id,
         displayName: vehicle.display_name,
@@ -568,6 +572,8 @@ export async function listDailyTripsForVehicleInRange(
       refilled_l,
       anomaly_status,
       route_key,
+      start_country_code,
+      end_country_code,
       vehicles!inner (
         id,
         display_name,
@@ -621,6 +627,8 @@ export async function listDailyTripsForVehicleInRange(
       refilledL: Number(row.refilled_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
+      startCountryCode: (row.start_country_code as string | null) ?? null,
+      endCountryCode: (row.end_country_code as string | null) ?? null,
       vehicle: {
         id: vehicle.id,
         displayName: vehicle.display_name,
@@ -674,6 +682,8 @@ export async function listDailyTripsForRange(
       refilled_l,
       anomaly_status,
       route_key,
+      start_country_code,
+      end_country_code,
       vehicles!inner (
         id,
         display_name,
@@ -726,6 +736,8 @@ export async function listDailyTripsForRange(
       refilledL: Number(row.refilled_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
+      startCountryCode: (row.start_country_code as string | null) ?? null,
+      endCountryCode: (row.end_country_code as string | null) ?? null,
       vehicle: {
         id: vehicle.id,
         displayName: vehicle.display_name,

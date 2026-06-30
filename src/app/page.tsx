@@ -27,7 +27,7 @@ import { ReportRangeFilters } from "@/components/report/ReportRangeFilters";
 import { formatReportDaysLabel } from "@/analytics/fuel-consumption-status";
 import { isImportActive } from "@/lib/report/coverage";
 import { useRangeReport } from "@/hooks/useRangeReport";
-import { resolveInitialRange } from "@/lib/report/dates";
+import { isValidDateParam, resolveInitialRange } from "@/lib/report/dates";
 import {
   formatDate,
   formatDuration,
@@ -115,10 +115,11 @@ function HomePageFallback() {
 function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialRange = resolveInitialRange(
-    searchParams.get("from"),
-    searchParams.get("to"),
-  );
+  const fromParam = searchParams.get("from");
+  const toParam = searchParams.get("to");
+  const urlRangeReady =
+    isValidDateParam(fromParam) && isValidDateParam(toParam);
+  const initialRange = resolveInitialRange(fromParam, toParam);
 
   const syncRangeToUrl = useCallback(
     (from: string, to: string) => {
@@ -151,6 +152,7 @@ function HomePageContent() {
   } = useRangeReport({
     initialFrom: initialRange.from,
     initialTo: initialRange.to,
+    urlRangeReady,
     onRangeApplied: syncRangeToUrl,
   });
 

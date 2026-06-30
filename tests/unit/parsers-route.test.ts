@@ -1,11 +1,43 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseFuelReport } from "@/wialon/parsers/fuel-report";
-import { parseTripsReport } from "@/wialon/parsers/trips-report";
 import { classifyRoute } from "@/analytics/route-classifier";
+import { parseFuelReport } from "@/wialon/parsers/fuel-report";
+import { parseTripsReport, type ParsedTripSegment } from "@/wialon/parsers/trips-report";
 
 const fixturesDir = path.join(process.cwd(), "tests/fixtures");
+
+function baseSegment(
+  overrides: Partial<ParsedTripSegment>,
+): ParsedTripSegment {
+  return {
+    sourceRowNumber: 1,
+    startedAt: null,
+    endedAt: null,
+    durationSeconds: null,
+    mileageKm: 100,
+    urbanMileageKm: null,
+    highwayMileageKm: null,
+    averageFuelConsumptionLPer100Km: null,
+    fuelConsumedL: null,
+    averageSpeedKmh: null,
+    maxSpeedKmh: null,
+    startingFuelL: null,
+    endingFuelL: null,
+    startLatitude: null,
+    startLongitude: null,
+    startCountry: null,
+    startCity: null,
+    startAddress: null,
+    endLatitude: null,
+    endLongitude: null,
+    endCountry: null,
+    endCity: null,
+    endAddress: null,
+    rawRow: {},
+    ...overrides,
+  };
+}
 
 describe("parsers and route classification", () => {
   it("parses fuel stats by label for unit 6221", () => {
@@ -57,5 +89,23 @@ describe("parsers and route classification", () => {
     expect(route.routeKey).toBe("GB:CANTERBURY>BE:NIVELLES");
     expect(route.routeTag).toBe("UK_EU_INTERNATIONAL");
     expect(route.segments.filter((segment) => segment.isLocalManeuver)).toHaveLength(2);
+  });
+
+  it("classifies Ukrainian domestic route with km-from postal suffix", () => {
+    const route = classifyRoute(
+      [
+        baseSegment({
+          startAddress:
+            "Україна, Пирятинська ТГ, Лубенський р-н, Полтавська обл., М-03, 0.35 km from 37044",
+          endAddress:
+            "Україна, Яворівська ТГ, Яворівський р-н, Львівська обл., М-10, 1.05 km from Глиниці 81035",
+        }),
+      ],
+      2,
+    );
+    expect(route.routeKey).toBe("UA:ПИРЯТИНСЬКА_ТГ>UA:ГЛИНИЦІ");
+    expect(route.routeTag).toBe("UA_INTERNAL");
+    expect(route.startCountryCode).toBe("UA");
+    expect(route.endCountryCode).toBe("UA");
   });
 });
