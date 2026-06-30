@@ -104,7 +104,8 @@ describe("coverage helpers", () => {
       date: "2026-06-20",
       today: "2026-06-23",
       hasTrip: false,
-      tripIsFinal: false,
+      hasIngestionRun: true,
+      fleetRunIsFinal: false,
       fleetRunStatus: "running",
       fleetHeartbeatAt: new Date().toISOString(),
       vehicleRunStatus: null,
@@ -112,6 +113,62 @@ describe("coverage helpers", () => {
     expect(result.state).toBe("running");
     expect(result.ready).toBe(false);
     vi.useRealTimers();
+  });
+
+  it("marks past date ready when vehicle ingest completed but fleet run is partial", () => {
+    const result = buildVehicleCoverageState({
+      date: "2026-06-29",
+      today: "2026-06-30",
+      hasTrip: true,
+      hasIngestionRun: true,
+      fleetRunIsFinal: false,
+      fleetRunStatus: "partial",
+      fleetHeartbeatAt: "2026-06-30T08:00:00Z",
+      vehicleRunStatus: "completed",
+    });
+    expect(result).toEqual({ state: "ready", ready: true });
+  });
+
+  it("keeps legacy past trips ready without ingestion run", () => {
+    const result = buildVehicleCoverageState({
+      date: "2026-06-20",
+      today: "2026-06-30",
+      hasTrip: true,
+      hasIngestionRun: false,
+      fleetRunIsFinal: false,
+      fleetRunStatus: null,
+      fleetHeartbeatAt: null,
+      vehicleRunStatus: null,
+    });
+    expect(result).toEqual({ state: "ready", ready: true });
+  });
+
+  it("marks today provisional when vehicle completed but fleet run not final", () => {
+    const result = buildVehicleCoverageState({
+      date: "2026-06-30",
+      today: "2026-06-30",
+      hasTrip: true,
+      hasIngestionRun: true,
+      fleetRunIsFinal: false,
+      fleetRunStatus: "partial",
+      fleetHeartbeatAt: "2026-06-30T08:00:00Z",
+      vehicleRunStatus: "completed",
+    });
+    expect(result).toEqual({ state: "provisional", ready: true });
+  });
+
+  it("marks failed vehicle ingest on past date", () => {
+    const result = buildVehicleCoverageState({
+      date: "2026-06-29",
+      today: "2026-06-30",
+      hasTrip: false,
+      hasIngestionRun: true,
+      fleetRunIsFinal: false,
+      fleetRunStatus: "partial",
+      fleetHeartbeatAt: "2026-06-30T08:00:00Z",
+      vehicleRunStatus: "failed",
+    });
+    expect(result).toEqual({ state: "failed", ready: false });
   });
 
   it("detects stale fleet runs as not actively processing", () => {

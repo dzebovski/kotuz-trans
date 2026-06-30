@@ -44,8 +44,41 @@ describe("parseFuelEvents", () => {
 
     expect(warnings).toEqual([]);
     expect(events).toHaveLength(1);
-    expect(events[0]?.eventType).toBe("refill");
-    expect(events[0]?.volumeL).toBe(471);
+    expect(events[0]).toMatchObject({
+      eventType: "refill",
+      eventTime: "2026-06-25 16:30:47",
+      volumeL: 471,
+      latitude: 51.6605533,
+      longitude: 14.764155,
+      address: "68-212 Olszyna, Poland",
+    });
+  });
+
+  it("parses chronology refill rows with Ukrainian address in start position", () => {
+    const { events, warnings } = parseFuelEvents([
+      {
+        n: 4,
+        c: [
+          "Заправка",
+          "2026-06-28 14:22:10\n49.1234567° N, 23.9876543° E",
+          "2026-06-28 14:35:00",
+          "0:12:50",
+          "Україна, Новояричівська ТГ, Львівський р-н, Львівська обл., Київська, 80461",
+          "",
+          "Volume: 320 l",
+          "",
+        ],
+      },
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventType: "refill",
+      volumeL: 320,
+      address:
+        "Україна, Новояричівська ТГ, Львівський р-н, Львівська обл., Київська, 80461",
+    });
   });
 
   it("parses unit_fillings rows with Kyiv-local timestamps", () => {

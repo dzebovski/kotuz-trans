@@ -13,6 +13,10 @@ import type {
   VehicleReportResponse,
 } from "@/lib/report/types";
 
+function ingestErrorMessage(result: VehicleIngestResponse): string {
+  return result.reason ?? "Не вдалося завантажити дані для машини";
+}
+
 type UseVehicleReportOptions = {
   vehicleId: string;
   initialFrom: string;
@@ -158,6 +162,11 @@ export function useVehicleReport({
           scheduleNext();
           return;
         }
+        if (result.status === "failed") {
+          setImportActive(false);
+          setError(ingestErrorMessage(result));
+          return;
+        }
         if (result.reportDate) {
           lastIngestedDateRef.current = result.reportDate;
           setRangeRunStatus(`Оброблено ${formatDate(result.reportDate)}…`);
@@ -243,6 +252,11 @@ export function useVehicleReport({
       }
       if (result.status === "idle") {
         setImportActive(false);
+      }
+      if (result.status === "failed") {
+        setImportActive(false);
+        setError(ingestErrorMessage(result));
+        return;
       }
       if (result.reportDate) {
         lastIngestedDateRef.current = result.reportDate;

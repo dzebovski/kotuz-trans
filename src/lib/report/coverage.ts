@@ -125,17 +125,23 @@ export function buildVehicleCoverageState(input: {
   date: string;
   today: string;
   hasTrip: boolean;
-  tripIsFinal: boolean;
+  hasIngestionRun: boolean;
+  fleetRunIsFinal: boolean;
   fleetRunStatus: string | null;
   fleetHeartbeatAt: string | null;
   vehicleRunStatus: string | null;
 }): { state: CoverageState; ready: boolean } {
   const isToday = input.date === input.today;
-  const ready = input.hasTrip && (isToday || input.tripIsFinal);
+  const vehicleIngestComplete = input.vehicleRunStatus === "completed";
+  const tripIsFinal =
+    input.fleetRunIsFinal ||
+    (!isToday && vehicleIngestComplete) ||
+    (!input.hasIngestionRun && !isToday);
+  const ready = input.hasTrip && (isToday || tripIsFinal);
 
   if (ready) {
     return {
-      state: isToday && !input.tripIsFinal ? "provisional" : "ready",
+      state: isToday && !input.fleetRunIsFinal ? "provisional" : "ready",
       ready: true,
     };
   }

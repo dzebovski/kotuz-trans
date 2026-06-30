@@ -139,6 +139,8 @@ function parseChronologyFuelEventRow(row: WialonTableRow): ParsedFuelEvent | nul
   }
 
   const start = parseCoordinateAddressCell(cells[1] ?? null);
+  const startPosition = parseCoordinateAddressCell(cells[4] ?? null);
+  const endPosition = parseCoordinateAddressCell(cells[5] ?? null);
   const description = cellToString(cells[6] ?? null);
   const notes = cellToString(cells[7] ?? null);
   const volumeL = extractVolume(description, notes);
@@ -146,13 +148,18 @@ function parseChronologyFuelEventRow(row: WialonTableRow): ParsedFuelEvent | nul
     return null;
   }
 
+  const address =
+    startPosition.address ??
+    (eventType === "drain" ? endPosition.address : null) ??
+    start.address;
+
   return {
     eventType,
     eventTime: start.time,
     volumeL,
-    latitude: start.latitude,
-    longitude: start.longitude,
-    address: start.address,
+    latitude: start.latitude ?? startPosition.latitude ?? endPosition.latitude,
+    longitude: start.longitude ?? startPosition.longitude ?? endPosition.longitude,
+    address,
     sourceRowNumber: row.n ?? 0,
     rawEvent: {
       format: "unit_chronology",
