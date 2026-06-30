@@ -89,7 +89,11 @@ export function formatRouteFlags(days: RouteDay[]): string {
   if (countries.length === 0) {
     return "—";
   }
-  const flags = countries
+  const displayCountries =
+    countries.length > 2
+      ? [countries[0], countries[countries.length - 1]]
+      : countries;
+  const flags = displayCountries
     .map((code) => countryCodeToFlag(code))
     .filter((flag): flag is string => Boolean(flag));
   if (flags.length === 0) {

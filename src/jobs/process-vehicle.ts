@@ -14,6 +14,8 @@ import {
   type TripSegmentUpsert,
 } from "@/db/trips-repository";
 import type { VehicleRecord } from "@/db/vehicles-repository";
+import { logIngestionEvent } from "@/db/ingestion-events-repository";
+import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/job-names";
 import { log } from "@/utils/logger";
 import { isWithinPercentTolerance } from "@/utils/numbers";
 import type { BusinessDayInterval } from "@/utils/time";
@@ -325,10 +327,21 @@ export async function processVehicle(input: {
       fuelEvents,
     });
 
+    const durationMs = Date.now() - startedAt;
     log("info", "vehicle_processed", {
       reportDate: input.interval.reportDate,
       wialonUnitId: input.vehicle.wialon_unit_id,
-      durationMs: Date.now() - startedAt,
+      durationMs,
+    });
+    await logIngestionEvent({
+      jobName: DAILY_FLEET_REPORT_JOB_NAME,
+      reportDate: input.interval.reportDate,
+      runId: input.ingestionRunId,
+      vehicleId: input.vehicle.id,
+      scope: "vehicle",
+      eventType: "succeeded",
+      durationMs,
+      status: "completed",
     });
 
     return {
@@ -357,11 +370,24 @@ export async function processVehicle(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const wialonCode = error instanceof WialonError ? error.code : undefined;
+    const durationMs = Date.now() - startedAt;
     log("error", "vehicle_failed", {
       reportDate: input.interval.reportDate,
       wialonUnitId: input.vehicle.wialon_unit_id,
       message,
       wialonErrorCode: wialonCode,
+    });
+    await logIngestionEvent({
+      jobName: DAILY_FLEET_REPORT_JOB_NAME,
+      reportDate: input.interval.reportDate,
+      runId: input.ingestionRunId,
+      vehicleId: input.vehicle.id,
+      scope: "vehicle",
+      eventType: "failed",
+      durationMs,
+      status: "failed",
+      message,
+      wialonErrorCode: wialonCode ?? null,
     });
     return {
       success: false,

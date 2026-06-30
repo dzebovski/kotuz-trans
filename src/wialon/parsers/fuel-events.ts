@@ -46,6 +46,33 @@ function shouldSkipChronologyRow(typeCell: string): boolean {
   return SKIP_CHRONOLOGY_TYPES.some((pattern) => pattern.test(typeCell.trim()));
 }
 
+function hasLiterUnit(cell: WialonStatCell): boolean {
+  const { unit } = parseValueWithUnit(cell);
+  return unit != null && /^l$/i.test(unit);
+}
+
+function isStructuredFillingRow(cells: WialonStatCell[]): boolean {
+  if (cells.length < 6) {
+    return false;
+  }
+  if (!hasLiterUnit(cells[3] ?? null)) {
+    return false;
+  }
+  if (!hasLiterUnit(cells[4] ?? null)) {
+    return false;
+  }
+  if (!hasLiterUnit(cells[5] ?? null)) {
+    return false;
+  }
+  const volumeL = parseValueWithUnit(cells[5] ?? null).value;
+  const fuelBeforeL = parseValueWithUnit(cells[3] ?? null).value;
+  const fuelAfterL = parseValueWithUnit(cells[4] ?? null).value;
+  if (volumeL == null || volumeL <= 0) {
+    return false;
+  }
+  return fuelBeforeL != null && fuelAfterL != null;
+}
+
 function extractVolume(description: string, notes: string): number | null {
   const sources = [description, notes];
   for (const source of sources) {
@@ -58,19 +85,6 @@ function extractVolume(description: string, notes: string): number | null {
     }
   }
   return null;
-}
-
-function isStructuredFillingRow(cells: WialonStatCell[]): boolean {
-  if (cells.length < 6) {
-    return false;
-  }
-  const volumeL = parseValueWithUnit(cells[5] ?? null).value;
-  const fuelBeforeL = parseValueWithUnit(cells[3] ?? null).value;
-  const fuelAfterL = parseValueWithUnit(cells[4] ?? null).value;
-  if (volumeL == null || volumeL <= 0) {
-    return false;
-  }
-  return fuelBeforeL != null && fuelAfterL != null;
 }
 
 function parseStructuredFillingRow(row: WialonTableRow): ParsedFuelEvent | null {
@@ -156,6 +170,11 @@ export function parseFuelEvents(
   const warnings: string[] = [];
 
   for (const row of rows) {
+    const typeCell = cellToString(row.c?.[0] ?? null);
+    if (shouldSkipChronologyRow(typeCell)) {
+      continue;
+    }
+
     const structured = parseStructuredFillingRow(row);
     if (structured) {
       events.push(structured);
@@ -168,8 +187,7 @@ export function parseFuelEvents(
       continue;
     }
 
-    const typeCell = cellToString(row.c?.[0] ?? null);
-    if (typeCell && !shouldSkipChronologyRow(typeCell) && !/^\d+$/.test(typeCell.trim())) {
+    if (typeCell && !/^\d+$/.test(typeCell.trim())) {
       warnings.push(`Unknown fuel event type in row ${row.n ?? "?"}`);
     }
   }

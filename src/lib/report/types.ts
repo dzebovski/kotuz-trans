@@ -16,8 +16,18 @@ export type CoverageDay = {
   failedVehicles: number;
   expectedVehicles: number;
   queueAttempts: number;
+  queueStatus: string | null;
+  queueRunAfter: string | null;
   lastError: string | null;
   updatedAt: string | null;
+  currentVehicles?: Array<{ wialonUnitId: number; displayName: string }>;
+};
+
+export type RangeStatusResponse = {
+  range: { from: string; to: string; today: string };
+  ready: boolean;
+  partialReady: boolean;
+  coverage: CoverageDay[];
 };
 
 export type RangeDay = {
@@ -82,11 +92,20 @@ export type RangeResponse = {
   vehicles: RangeVehicle[];
 };
 
+export type RunRangeIdleReason =
+  | "deadline"
+  | "empty"
+  | "backoff"
+  | "exhausted"
+  | "out_of_range";
+
 export type RunRangeResponse = {
   ok: boolean;
-  status: "completed" | "partial" | "failed" | "skipped" | "idle";
+  status: "completed" | "partial" | "failed" | "skipped" | "idle" | "running";
   reportDate?: string;
   reason?: string | null;
+  idleReason?: RunRangeIdleReason;
+  remaining?: number;
 };
 
 export type EnsureRangeResponse = {
@@ -130,4 +149,64 @@ export type VehicleFuelRefill = {
 export type VehicleDetailsResponse = {
   segments: VehicleTripSegment[];
   refills: VehicleFuelRefill[];
+};
+
+export type VehicleReportResponse = {
+  range: { from: string; to: string; today: string };
+  ready: boolean;
+  partialReady: boolean;
+  coverage: CoverageDay[];
+  vehicle: RangeVehicle | null;
+};
+
+export type VehicleIngestResponse = {
+  ok: boolean;
+  status:
+    | "completed"
+    | "partial"
+    | "failed"
+    | "skipped"
+    | "idle"
+    | "blocked";
+  reportDate?: string;
+  reason?: string | null;
+};
+
+export type CoverageDiagnosticsVehicle = {
+  vehicleId: string;
+  displayName: string;
+  tractorNumber: string;
+  wialonUnitId: number;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+export type CoverageDiagnosticsEvent = {
+  id: string;
+  scope: string;
+  eventType: string;
+  attempt: number | null;
+  status: string | null;
+  message: string | null;
+  vehicleId: string | null;
+  createdAt: string;
+};
+
+export type CoverageDiagnosticsDay = {
+  date: string;
+  runStatus: string | null;
+  vehicles: CoverageDiagnosticsVehicle[];
+  failedVehicles: CoverageDiagnosticsVehicle[];
+  retryExhausted: boolean;
+  queueAttempts: number;
+  queueLastError: string | null;
+  recentEvents: CoverageDiagnosticsEvent[];
+};
+
+export type CoverageDiagnosticsResponse = {
+  range: { from: string; to: string };
+  days: CoverageDiagnosticsDay[];
 };

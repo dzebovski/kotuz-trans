@@ -99,4 +99,25 @@ describe("parseFuelEvents", () => {
     expect(events).toEqual([]);
     expect(warnings).toEqual([]);
   });
+
+  it("does not treat trip rows with postal-code addresses as refills", () => {
+    const { events, warnings } = parseFuelEvents([
+      {
+        n: 1,
+        c: [
+          "Trip",
+          { t: "2026-06-24 21:41:00", y: 51.22, x: 2.92 },
+          { t: "2026-06-25 07:58:00", y: 50.85, x: 3.27 },
+          "10:17:00",
+          { t: "4836 Oost-Vlaanderen, Belgium" },
+          { t: "8400 Oostende, Belgium" },
+          "Mileage: 312 km",
+          "",
+        ],
+      },
+    ]);
+
+    expect(events).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
 });

@@ -3,22 +3,37 @@
 import {
   AlertTriangle,
   Clock3,
+  Fuel,
+  Gauge,
   LogOut,
   Moon,
+  Route,
   Search,
   Sun,
   Truck,
 } from "lucide-react";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/Badge";
 import { RangeFleetTable } from "@/components/fleet/RangeFleetTable";
 import { CoveragePanel } from "@/components/report/CoveragePanel";
 import { ReportRangeFilters } from "@/components/report/ReportRangeFilters";
 import { formatReportDaysLabel } from "@/analytics/fuel-consumption-status";
+import { isImportActive } from "@/lib/report/coverage";
 import { useRangeReport } from "@/hooks/useRangeReport";
 import { resolveInitialRange } from "@/lib/report/dates";
-import { formatDate, formatNum, readJsonResponse } from "@/lib/report/format";
+import {
+  formatDate,
+  formatDuration,
+  formatNum,
+  readJsonResponse,
+} from "@/lib/report/format";
 import { createClient } from "@/lib/supabase/client";
 
 type ThemeMode = "light" | "dark";
@@ -29,20 +44,51 @@ function isThemeMode(value: string | null): value is ThemeMode {
   return value === "light" || value === "dark";
 }
 
-function SummaryMetric({
+function SummaryMetricCard({
+  icon,
+  label,
+  value,
+  children,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  children?: ReactNode;
+  tone?: "danger" | "warning";
+}) {
+  const hasMeta = children != null;
+
+  return (
+    <article
+      className={`panel summary-metric${tone ? ` summary-metric--${tone}` : ""}${
+        hasMeta ? "" : " summary-metric--no-meta"
+      }`}
+    >
+      <div className="summary-metric__header">
+        <span className="summary-metric__icon">{icon}</span>
+        <span>{label}</span>
+      </div>
+      <strong className="summary-metric__value mono">{value}</strong>
+      {hasMeta ? <div className="summary-metric__meta">{children}</div> : null}
+    </article>
+  );
+}
+
+function SummaryDetailStat({
   label,
   value,
   tone,
 }: {
   label: string;
   value: string;
-  tone?: "danger" | "warning";
+  tone?: "danger" | "success" | "warning";
 }) {
   return (
-    <div className={`panel summary-metric${tone ? ` summary-metric--${tone}` : ""}`}>
-      <span>{label}</span>
+    <span className={tone ? `summary-metric__meta-stat--${tone}` : undefined}>
+      <small>{label}</small>
       <strong className="mono">{value}</strong>
-    </div>
+    </span>
   );
 }
 
@@ -96,6 +142,8 @@ function HomePageContent() {
     mutating,
     rangeRunStatus,
     error,
+    stuck,
+    lastIdleReason,
     applyRange,
     applyPreset,
     runRangeImport,
@@ -140,8 +188,17 @@ function HomePageContent() {
   const readyDates = data?.coverage.filter((day) => day.ready).length ?? 0;
   const showReportData = Boolean(data?.ready || data?.partialReady);
   const todayCoverage = data?.coverage.find((day) => day.isToday);
+  const reportVehicles = data?.vehicles ?? [];
   const totalMileageKm = data?.summary?.totalMileageKm ?? 0;
   const totalFuelL = data?.summary?.totalFuelL ?? 0;
+  const totalRefillCount = reportVehicles.reduce(
+    (sum, vehicle) => sum + vehicle.refillCount,
+    0,
+  );
+  const totalRefilledL = reportVehicles.reduce(
+    (sum, vehicle) => sum + vehicle.refilledL,
+    0,
+  );
   const averageFleetSpeedKmh =
     data?.summary && data.summary.totalMovementSeconds > 0
       ? totalMileageKm / (data.summary.totalMovementSeconds / 3600)
@@ -210,13 +267,18 @@ function HomePageContent() {
 
           <CoveragePanel
             coverage={data?.coverage ?? []}
+            from={from}
+            to={to}
             loading={loading}
             mutating={mutating}
             ready={Boolean(data?.ready)}
             runStatus={rangeRunStatus}
+            stuck={stuck}
+            lastIdleReason={lastIdleReason}
             onImport={() => void runRangeImport("missing")}
             onForceReload={() => void runRangeImport("force")}
             onRetry={() => void runRangeImport("missing", true)}
+            onRestart={() => void runRangeImport("force")}
             onRefreshToday={
               todayCoverage
                 ? () =>
@@ -230,7 +292,7 @@ function HomePageContent() {
             }
           />
 
-          {data?.partialReady ? (
+          {data?.partialReady && isImportActive(data.coverage) ? (
             <div className="provisional-banner">
               <Clock3 size={16} />
               Готово {readyDates}/{data.coverage.length} дат. Решта довантажується у фоні —
@@ -248,9 +310,19 @@ function HomePageContent() {
               ) : null}
 
               <section className="fleet-summary" aria-label="Зведені показники">
-                <div className="fleet-summary__count">
-                  <strong>{data?.summary?.vehicleCount ?? 0} авто</strong>
-                  <span>{formatReportDaysLabel(data?.summary?.dateCount ?? 0)}</span>
+                <article className="panel fleet-summary__count">
+                  <div className="summary-metric__header">
+                    <span className="summary-metric__icon">
+                      <Truck size={18} />
+                    </span>
+                    <span>Флот</span>
+                  </div>
+                  <strong className="fleet-summary__count-value mono">
+                    {data?.summary?.vehicleCount ?? 0} авто
+                  </strong>
+                  <span className="fleet-summary__period">
+                    {formatReportDaysLabel(data?.summary?.dateCount ?? 0)}
+                  </span>
                   <div className="chip-row">
                     <Badge tone="success">
                       <AlertTriangle size={13} />
@@ -271,14 +343,44 @@ function HomePageContent() {
                       {data?.summary?.fuelStatusCounts?.high ?? 0} високий розхід
                     </Badge>
                   </div>
-                </div>
-                <SummaryMetric label="Пройдена відстань" value={formatNum(totalMileageKm, " km")} />
-                <SummaryMetric label="Витрачено палива" value={formatNum(totalFuelL, " l")} />
-                <SummaryMetric
+                </article>
+                <SummaryMetricCard
+                  icon={<Route size={18} />}
+                  label="Пройдена відстань"
+                  value={formatNum(totalMileageKm, " km")}
+                >
+                  <SummaryDetailStat
+                    label="Авто"
+                    value={(data?.summary?.vehicleCount ?? 0).toString()}
+                  />
+                  <SummaryDetailStat
+                    label="Днів"
+                    value={(data?.summary?.dateCount ?? 0).toString()}
+                  />
+                </SummaryMetricCard>
+                <SummaryMetricCard
+                  icon={<Fuel size={18} />}
+                  label="Витрачено палива"
+                  value={formatNum(totalFuelL, " l")}
+                >
+                  <SummaryDetailStat
+                    label="Заправок"
+                    value={totalRefillCount.toString()}
+                  />
+                  <SummaryDetailStat label="Залито" value={formatNum(totalRefilledL, " l")} />
+                </SummaryMetricCard>
+                <SummaryMetricCard
+                  icon={<Gauge size={18} />}
                   label="Середня швидкість флоту"
                   value={formatNum(averageFleetSpeedKmh, " km/h")}
-                />
-                <SummaryMetric
+                >
+                  <SummaryDetailStat
+                    label="Час руху"
+                    value={formatDuration(data?.summary?.totalMovementSeconds ?? null)}
+                  />
+                </SummaryMetricCard>
+                <SummaryMetricCard
+                  icon={<Truck size={18} />}
                   label="Середня витрата пального"
                   value={formatNum(averageFuelConsumptionLPer100Km, " l/100km")}
                 />

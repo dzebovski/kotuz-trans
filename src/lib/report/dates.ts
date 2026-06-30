@@ -1,5 +1,6 @@
 export const BUSINESS_TIMEZONE = "Europe/Kyiv";
 export const POLL_INTERVAL_MS = 5_000;
+export const CHUNK_KICK_DELAY_MS = 500;
 
 export function getKyivDate(offsetDays = 0): string {
   const parts = new Intl.DateTimeFormat("en-CA", {

@@ -3,6 +3,7 @@ import {
   type FleetVehicleSummary,
 } from "@/analytics/fleet-summary";
 import { getServerEnv } from "@/config/env";
+import { logIngestionEvent } from "@/db/ingestion-events-repository";
 import {
   acquireIngestionLock,
   ensureIngestionVehicleSnapshot,
@@ -28,6 +29,8 @@ import {
 } from "@/utils/time";
 import { DateTime } from "luxon";
 
+import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/job-names";
+
 export type RunDailyFleetReportOptions = {
   reportDate?: string;
   sendTelegram?: boolean;
@@ -41,9 +44,11 @@ export type RunDailyFleetReportResult = {
   reportDate: string;
   reason?: string;
   summary?: ReturnType<typeof buildFleetSummary>;
+  pendingVehicles?: number;
+  deadlineHit?: boolean;
 };
 
-export const DAILY_FLEET_REPORT_JOB_NAME = "daily-fleet-report";
+export { DAILY_FLEET_REPORT_JOB_NAME };
 
 export async function runDailyFleetReport(
   options: RunDailyFleetReportOptions = {},
@@ -88,6 +93,12 @@ export async function runDailyFleetReport(
   const vehicles = await listVehiclesByIds(
     selectedSnapshotRows.map((row) => row.vehicle_id),
   );
+  const baseSuccessfulOffset = snapshot.filter(
+    (row) => row.status === "completed",
+  ).length;
+  const baseFailedOffset = snapshot.filter(
+    (row) => row.status === "failed",
+  ).length;
   const softDeadlineMs =
     options.softDeadlineMs === undefined ? 270_000 : options.softDeadlineMs;
   const deadlineAt =
@@ -97,26 +108,17 @@ export async function runDailyFleetReport(
   const successfulVehicleIds: string[] = [];
   const failedVehicles: Array<{ wialonUnitId: number; reason: string }> = [];
   const errorSummary: Array<Record<string, unknown>> = [];
+  let deadlineHit = false;
+
+  const chunkProgress = () => ({
+    successfulVehicles: baseSuccessfulOffset + successful.length,
+    failedVehicles: baseFailedOffset + failedVehicles.length,
+  });
 
   const pending = [...vehicles];
   while (pending.length > 0) {
     if (deadlineAt != null && Date.now() >= deadlineAt) {
-      for (const vehicle of pending) {
-        failedVehicles.push({
-          wialonUnitId: vehicle.wialon_unit_id,
-          reason: "deadline",
-        });
-        errorSummary.push({
-          wialonUnitId: vehicle.wialon_unit_id,
-          reason: "deadline",
-        });
-        await markIngestionVehicleResult({
-          runId: run.id,
-          vehicleId: vehicle.id,
-          success: false,
-          error: "deadline",
-        });
-      }
+      deadlineHit = true;
       break;
     }
 
@@ -128,8 +130,7 @@ export async function runDailyFleetReport(
     );
     await updateIngestionProgress({
       runId: run.id,
-      successfulVehicles: successful.length,
-      failedVehicles: failedVehicles.length,
+      ...chunkProgress(),
       phase: "processing",
       currentVehicles: batch.map((vehicle) => ({
         wialonUnitId: vehicle.wialon_unit_id,
@@ -192,17 +193,32 @@ export async function runDailyFleetReport(
 
     await updateIngestionProgress({
       runId: run.id,
-      successfulVehicles: successful.length,
-      failedVehicles: failedVehicles.length,
+      ...chunkProgress(),
       phase: "processing",
       currentVehicles: [],
     });
   }
 
+  const countsAfterLoop = await getIngestionVehicleCounts(run.id);
+  if (deadlineHit && countsAfterLoop.pending > 0) {
+    await updateIngestionProgress({
+      runId: run.id,
+      successfulVehicles: countsAfterLoop.successful,
+      failedVehicles: countsAfterLoop.failed,
+      phase: "processing",
+      currentVehicles: [],
+    });
+    return {
+      status: "partial",
+      reportDate,
+      pendingVehicles: countsAfterLoop.pending,
+      deadlineHit: true,
+    };
+  }
+
   await updateIngestionProgress({
     runId: run.id,
-    successfulVehicles: successful.length,
-    failedVehicles: failedVehicles.length,
+    ...chunkProgress(),
     phase: "finalizing",
     currentVehicles: [],
   });
@@ -276,6 +292,24 @@ export async function runDailyFleetReport(
       reportDate,
       phase: "finalizing",
       currentVehicles: [],
+    },
+  });
+
+  await logIngestionEvent({
+    jobName: DAILY_FLEET_REPORT_JOB_NAME,
+    reportDate,
+    runId: run.id,
+    scope: "run",
+    eventType: "finalized",
+    status,
+    message:
+      counts.failed + counts.pending > 0
+        ? `${counts.failed + counts.pending} vehicle(s) failed`
+        : null,
+    metadata: {
+      successfulVehicles: counts.successful,
+      failedVehicles: counts.failed + counts.pending,
+      expectedVehicles: counts.expected,
     },
   });
 

@@ -19,6 +19,139 @@ export type IngestionQueueRecord = {
   updated_at: string;
 };
 
+export type IngestionQueueIdleReason =
+  | "deadline"
+  | "empty"
+  | "backoff"
+  | "exhausted"
+  | "out_of_range";
+
+export type IngestionQueueInspectCounts = {
+  pending: number;
+  claimable: number;
+  backoff: number;
+  exhausted: number;
+  running: number;
+  completed: number;
+  failed: number;
+};
+
+export function isQueueItemClaimableAt(
+  item: Pick<IngestionQueueRecord, "status" | "attempts" | "run_after">,
+  now = Date.now(),
+): boolean {
+  if (item.attempts >= 3) {
+    return false;
+  }
+  if (item.status === "pending" && new Date(item.run_after).getTime() <= now) {
+    return true;
+  }
+  return false;
+}
+
+export function inspectIngestionQueueItems(
+  items: IngestionQueueRecord[],
+  now = Date.now(),
+): IngestionQueueInspectCounts {
+  let pending = 0;
+  let claimable = 0;
+  let backoff = 0;
+  let exhausted = 0;
+  let running = 0;
+  let completed = 0;
+  let failed = 0;
+
+  for (const item of items) {
+    switch (item.status) {
+      case "pending":
+        pending += 1;
+        if (item.attempts >= 3) {
+          exhausted += 1;
+        } else if (new Date(item.run_after).getTime() > now) {
+          backoff += 1;
+        } else {
+          claimable += 1;
+        }
+        break;
+      case "running":
+        running += 1;
+        break;
+      case "completed":
+        completed += 1;
+        break;
+      case "failed":
+        failed += 1;
+        if (item.attempts >= 3) {
+          exhausted += 1;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  return {
+    pending,
+    claimable,
+    backoff,
+    exhausted,
+    running,
+    completed,
+    failed,
+  };
+}
+
+export function resolveQueueIdleReason(input: {
+  items: IngestionQueueRecord[];
+  from?: string;
+  to?: string;
+  now?: number;
+}): IngestionQueueIdleReason {
+  const now = input.now ?? Date.now();
+  const scoped =
+    input.from && input.to
+      ? input.items.filter(
+          (item) =>
+            item.report_date >= input.from! && item.report_date <= input.to!,
+        )
+      : input.items;
+  const counts = inspectIngestionQueueItems(scoped, now);
+
+  if (counts.claimable > 0) {
+    return "empty";
+  }
+
+  if (counts.running > 0) {
+    return "empty";
+  }
+
+  if (counts.backoff > 0) {
+    return "backoff";
+  }
+
+  if (counts.exhausted > 0 && counts.pending + counts.failed > 0) {
+    return "exhausted";
+  }
+
+  return "empty";
+}
+
+export async function inspectIngestionQueueForRange(
+  jobName: string,
+  from: string,
+  to: string,
+  now = Date.now(),
+): Promise<{
+  counts: IngestionQueueInspectCounts;
+  idleReason: IngestionQueueIdleReason;
+  items: IngestionQueueRecord[];
+}> {
+  const items = await listIngestionQueueForRange(jobName, from, to);
+  const counts = inspectIngestionQueueItems(items, now);
+  const idleReason = resolveQueueIdleReason({ items, from, to, now });
+  return { counts, idleReason, items };
+}
+
 const RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 const STALE_QUEUE_MS = 15 * 60_000;
 
@@ -121,6 +254,7 @@ export async function listIngestionQueueForRange(
 
 export async function claimNextIngestionDate(
   jobName: string,
+  range?: { from?: string; to?: string },
 ): Promise<IngestionQueueRecord | null> {
   const staleBefore = new Date(Date.now() - STALE_QUEUE_MS).toISOString();
   const { data, error } = await getSupabaseAdmin().rpc(
@@ -128,6 +262,8 @@ export async function claimNextIngestionDate(
     {
       p_job_name: jobName,
       p_stale_before: staleBefore,
+      p_from: range?.from ?? null,
+      p_to: range?.to ?? null,
     },
   );
   if (error) {

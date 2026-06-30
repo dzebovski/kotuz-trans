@@ -544,6 +544,113 @@ export async function listDailyTripsForDates(
   });
 }
 
+export async function listDailyTripsForVehicleInRange(
+  vehicleId: string,
+  from: string,
+  to: string,
+): Promise<RangeDailyTrip[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .select(
+      `
+      id,
+      report_date,
+      mileage_km,
+      fuel_consumed_l,
+      average_fuel_consumption_l_per_100km,
+      rolling_1000km_consumption_l_per_100km,
+      movement_duration_seconds,
+      average_speed_kmh,
+      parking_count_from_trips,
+      parking_duration_seconds,
+      max_speed_kmh,
+      refill_count,
+      refilled_l,
+      anomaly_status,
+      route_key,
+      vehicles!inner (
+        id,
+        display_name,
+        tractor_number,
+        wialon_unit_id,
+        consumption_tier
+      )
+    `,
+    )
+    .eq("vehicle_id", vehicleId)
+    .gte("report_date", from)
+    .lte("report_date", to)
+    .order("report_date");
+  if (error) {
+    throw new Error(`Failed to load vehicle trips for range: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const relation = row.vehicles as unknown;
+    const vehicle = (Array.isArray(relation) ? relation[0] : relation) as {
+      id: string;
+      display_name: string;
+      tractor_number: string;
+      wialon_unit_id: number;
+      consumption_tier: 30 | 32 | null;
+    };
+    return {
+      id: row.id as string,
+      reportDate: row.report_date as string,
+      mileageKm: Number(row.mileage_km),
+      fuelConsumedL:
+        row.fuel_consumed_l == null ? null : Number(row.fuel_consumed_l),
+      averageFuelConsumptionLPer100Km:
+        row.average_fuel_consumption_l_per_100km == null
+          ? null
+          : Number(row.average_fuel_consumption_l_per_100km),
+      rolling1000KmConsumptionLPer100Km:
+        row.rolling_1000km_consumption_l_per_100km == null
+          ? null
+          : Number(row.rolling_1000km_consumption_l_per_100km),
+      movementDurationSeconds:
+        (row.movement_duration_seconds as number | null) ?? null,
+      averageSpeedKmh:
+        row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
+      parkingCount: Number(row.parking_count_from_trips ?? 0),
+      parkingDurationSeconds:
+        (row.parking_duration_seconds as number | null) ?? null,
+      maxSpeedKmh:
+        row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
+      refillCount: Number(row.refill_count ?? 0),
+      refilledL: Number(row.refilled_l ?? 0),
+      fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
+      routeKey: (row.route_key as string | null) ?? null,
+      vehicle: {
+        id: vehicle.id,
+        displayName: vehicle.display_name,
+        tractorNumber: vehicle.tractor_number,
+        wialonUnitId: Number(vehicle.wialon_unit_id),
+        consumptionTier: (vehicle.consumption_tier as 30 | 32 | null) ?? null,
+      },
+    };
+  });
+}
+
+export async function getDailyTripForVehicleDate(
+  vehicleId: string,
+  reportDate: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("daily_trips")
+    .select("id")
+    .eq("vehicle_id", vehicleId)
+    .eq("report_date", reportDate)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load daily trip: ${error.message}`);
+  }
+  if (!data) {
+    return null;
+  }
+  return { id: data.id as string };
+}
+
 export async function listDailyTripsForRange(
   from: string,
   to: string,
@@ -895,11 +1002,20 @@ export async function upsertDailyTripWithSegments(input: {
   }
 
   if (input.fuelEvents.length > 0) {
-    const fuelRows = input.fuelEvents.map((event) => ({
+    const dedupedByNaturalKey = new Map<string, FuelEventUpsert>();
+    for (const event of input.fuelEvents) {
+      const key = `${event.vehicle_id}|${event.event_type}|${event.event_time}|${event.volume_l}`;
+      dedupedByNaturalKey.set(key, event);
+    }
+    const fuelRows = Array.from(dedupedByNaturalKey.values()).map((event) => ({
       ...event,
       daily_trip_id: dailyTripId,
     }));
-    const { error: fuelError } = await supabase.from("fuel_events").insert(fuelRows);
+    const { error: fuelError } = await supabase
+      .from("fuel_events")
+      .upsert(fuelRows, {
+        onConflict: "vehicle_id,event_type,event_time,volume_l",
+      });
     if (fuelError) {
       throw new Error(`Failed to insert fuel events: ${fuelError.message}`);
     }

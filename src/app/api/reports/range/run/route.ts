@@ -6,7 +6,7 @@ import { validateReportRange } from "@/utils/report-range";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -36,17 +36,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: range.error }, { status: 400 });
     }
 
+    const chunkMs = env.RANGE_RUN_CHUNK_MS ?? 45_000;
     const result = await processNextIngestionQueueItem({
       from: range.from,
       to: range.to,
-      softDeadlineMs: env.JOB_SOFT_DEADLINE_MS ?? 270_000,
+      softDeadlineMs: chunkMs,
     });
 
     return NextResponse.json({
       ok:
         result.status === "completed" ||
         result.status === "skipped" ||
-        result.status === "idle",
+        result.status === "idle" ||
+        result.status === "running",
       ...result,
     });
   } catch (error) {

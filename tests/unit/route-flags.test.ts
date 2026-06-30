@@ -49,7 +49,7 @@ describe("buildPeriodRouteCountries", () => {
 });
 
 describe("formatRouteFlags", () => {
-  it("formats flag sequence for period", () => {
+  it("shows only first and last countries when period has more than two", () => {
     expect(
       formatRouteFlags([
         {
@@ -63,7 +63,31 @@ describe("formatRouteFlags", () => {
           routeKey: "PL:WARSZAWA>DE:BERLIN",
         },
       ]),
-    ).toBe("🇺🇦 → 🇵🇱 → 🇩🇪");
+    ).toBe("🇺🇦 → 🇩🇪");
+  });
+
+  it("keeps two-country route visible", () => {
+    expect(
+      formatRouteFlags([
+        {
+          reportDate: "2026-06-01",
+          mileageKm: 100,
+          routeKey: "UA:KYIV>PL:WARSZAWA",
+        },
+      ]),
+    ).toBe("🇺🇦 → 🇵🇱");
+  });
+
+  it("keeps one-country route visible", () => {
+    expect(
+      formatRouteFlags([
+        {
+          reportDate: "2026-06-01",
+          mileageKm: 100,
+          routeKey: "UA:KYIV>UA:LVIV",
+        },
+      ]),
+    ).toBe("🇺🇦");
   });
 
   it("returns dash when no movement", () => {

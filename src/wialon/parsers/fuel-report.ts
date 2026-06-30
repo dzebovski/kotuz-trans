@@ -89,19 +89,22 @@ export function resolveFuelEventTableIndices(input: {
   }
 
   const indices: number[] = [];
+  const chronologyIndex = input.tables.findIndex(
+    (table) => table.name === "unit_chronology",
+  );
+
   if (daily.refillCount > 0) {
     const fillingsIndex = input.tables.findIndex(
       (table) => table.name === "unit_fillings",
     );
     if (fillingsIndex >= 0) {
       indices.push(fillingsIndex);
+    } else if (chronologyIndex >= 0) {
+      indices.push(chronologyIndex);
     }
   }
 
   if (daily.drainCount > 0) {
-    const chronologyIndex = input.tables.findIndex(
-      (table) => table.name === "unit_chronology",
-    );
     if (chronologyIndex >= 0 && !indices.includes(chronologyIndex)) {
       indices.push(chronologyIndex);
     }

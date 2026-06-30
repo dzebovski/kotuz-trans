@@ -431,3 +431,209 @@ export async function finalizeIngestionRun(input: {
     throw new Error(`Failed to finalize ingestion run: ${error.message}`);
   }
 }
+
+export type VehicleIngestionStatusRow = {
+  reportDate: string;
+  runStatus: IngestionStatus | null;
+  runHeartbeatAt: string | null;
+  runIsFinal: boolean;
+  vehicleStatus: IngestionVehicleStatus | null;
+  vehicleLastError: string | null;
+};
+
+export async function listVehicleIngestionStatusForRange(
+  jobName: string,
+  vehicleId: string,
+  from: string,
+  to: string,
+): Promise<VehicleIngestionStatusRow[]> {
+  const runs = await listIngestionRunsForRange(jobName, from, to);
+  if (runs.length === 0) {
+    return [];
+  }
+
+  const runIds = runs.map((run) => run.id);
+  const { data, error } = await getSupabaseAdmin()
+    .from("ingestion_run_vehicles")
+    .select("run_id,status,last_error")
+    .eq("vehicle_id", vehicleId)
+    .in("run_id", runIds);
+  if (error) {
+    throw new Error(`Failed to list vehicle ingestion rows: ${error.message}`);
+  }
+
+  const vehicleByRunId = new Map(
+    (data ?? []).map((row) => [
+      row.run_id as string,
+      {
+        status: row.status as IngestionVehicleStatus,
+        lastError: (row.last_error as string | null) ?? null,
+      },
+    ]),
+  );
+
+  return runs.map((run) => {
+    const vehicleRow = vehicleByRunId.get(run.id);
+    return {
+      reportDate: run.report_date,
+      runStatus: run.status,
+      runHeartbeatAt: run.heartbeat_at,
+      runIsFinal: run.is_final,
+      vehicleStatus: vehicleRow?.status ?? null,
+      vehicleLastError: vehicleRow?.lastError ?? null,
+    };
+  });
+}
+
+export async function createIngestionRunForDate(input: {
+  jobName: string;
+  reportDate: string;
+  expectedVehicles: number;
+}): Promise<IngestionRunRecord> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("ingestion_runs")
+    .insert({
+      job_name: input.jobName,
+      report_date: input.reportDate,
+      status: "running",
+      expected_vehicles: input.expectedVehicles,
+      successful_vehicles: 0,
+      failed_vehicles: 0,
+      heartbeat_at: new Date().toISOString(),
+      metadata: initialProgressMetadata(),
+    })
+    .select("*")
+    .single();
+  if (error) {
+    throw new Error(`Failed to create ingestion run: ${error.message}`);
+  }
+  return data as IngestionRunRecord;
+}
+
+export async function markIngestionRunProcessing(runId: string): Promise<void> {
+  const { error } = await getSupabaseAdmin()
+    .from("ingestion_runs")
+    .update({
+      status: "running",
+      heartbeat_at: new Date().toISOString(),
+      completed_at: null,
+    })
+    .eq("id", runId);
+  if (error) {
+    throw new Error(`Failed to mark ingestion run processing: ${error.message}`);
+  }
+}
+
+export async function resetVehicleIngestionSnapshotRow(input: {
+  runId: string;
+  vehicleId: string;
+}): Promise<void> {
+  const { error } = await getSupabaseAdmin()
+    .from("ingestion_run_vehicles")
+    .update({
+      status: "pending",
+      last_error: null,
+      started_at: null,
+      completed_at: null,
+    })
+    .eq("run_id", input.runId)
+    .eq("vehicle_id", input.vehicleId);
+  if (error) {
+    throw new Error(`Failed to reset vehicle ingestion row: ${error.message}`);
+  }
+}
+
+export type RunVehicleWithName = {
+  reportDate: string;
+  runId: string;
+  runStatus: IngestionStatus;
+  vehicleId: string;
+  displayName: string;
+  tractorNumber: string;
+  wialonUnitId: number;
+  status: IngestionVehicleStatus;
+  attempts: number;
+  lastError: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+export async function listRunVehiclesWithNamesForRange(
+  jobName: string,
+  from: string,
+  to: string,
+): Promise<RunVehicleWithName[]> {
+  const runs = await listIngestionRunsForRange(jobName, from, to);
+  if (runs.length === 0) {
+    return [];
+  }
+
+  const runIds = runs.map((run) => run.id);
+  const runById = new Map(runs.map((run) => [run.id, run]));
+  const { data, error } = await getSupabaseAdmin()
+    .from("ingestion_run_vehicles")
+    .select(
+      "run_id,vehicle_id,status,attempts,last_error,started_at,completed_at,vehicles(id,display_name,tractor_number,wialon_unit_id)",
+    )
+    .in("run_id", runIds);
+  if (error) {
+    throw new Error(`Failed to list run vehicles with names: ${error.message}`);
+  }
+
+  return (data ?? []).flatMap((row) => {
+    const run = runById.get(row.run_id as string);
+    if (!run) {
+      return [];
+    }
+    const joined = row.vehicles as
+      | {
+          id: string;
+          display_name: string;
+          tractor_number: string;
+          wialon_unit_id: number;
+        }
+      | {
+          id: string;
+          display_name: string;
+          tractor_number: string;
+          wialon_unit_id: number;
+        }[]
+      | null;
+    const vehicle = Array.isArray(joined) ? joined[0] : joined;
+    if (!vehicle) {
+      return [];
+    }
+    return [
+      {
+        reportDate: run.report_date,
+        runId: run.id,
+        runStatus: run.status,
+        vehicleId: row.vehicle_id as string,
+        displayName: vehicle.display_name,
+        tractorNumber: vehicle.tractor_number,
+        wialonUnitId: vehicle.wialon_unit_id,
+        status: row.status as IngestionVehicleStatus,
+        attempts: Number(row.attempts),
+        lastError: (row.last_error as string | null) ?? null,
+        startedAt: (row.started_at as string | null) ?? null,
+        completedAt: (row.completed_at as string | null) ?? null,
+      },
+    ];
+  });
+}
+
+export async function getIngestionVehicleRow(input: {
+  runId: string;
+  vehicleId: string;
+}): Promise<IngestionRunVehicleRecord | null> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("ingestion_run_vehicles")
+    .select("*")
+    .eq("run_id", input.runId)
+    .eq("vehicle_id", input.vehicleId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to read vehicle ingestion row: ${error.message}`);
+  }
+  return (data as IngestionRunVehicleRecord | null) ?? null;
+}

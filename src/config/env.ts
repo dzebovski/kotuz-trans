@@ -22,9 +22,9 @@ const serverEnvSchema = z.object({
   TELEGRAM_THREAD_ID: z.string().optional(),
   CRON_SECRET: z.string().optional(),
   BUSINESS_TIMEZONE: z.string().min(1).default("Europe/Kyiv"),
-  WIALON_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  WIALON_CONCURRENCY: z.coerce.number().int().positive().default(5),
   WIALON_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
-  WIALON_REPORT_TIMEOUT_MS: z.coerce.number().int().positive().default(180000),
+  WIALON_REPORT_TIMEOUT_MS: z.coerce.number().int().positive().default(50_000),
   WIALON_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1500),
   BASELINE_LOOKBACK_DAYS: z.coerce.number().int().positive().default(120),
   BASELINE_MIN_SAMPLES: z.coerce.number().int().positive().default(5),
@@ -33,6 +33,7 @@ const serverEnvSchema = z.object({
   ANOMALY_CRITICAL_PERCENT: z.coerce.number().positive().default(25),
   LOCAL_MANEUVER_MAX_KM: z.coerce.number().positive().default(2),
   JOB_SOFT_DEADLINE_MS: optionalPositiveInt,
+  RANGE_RUN_CHUNK_MS: optionalPositiveInt,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

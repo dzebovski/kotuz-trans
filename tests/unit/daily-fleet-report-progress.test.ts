@@ -220,4 +220,32 @@ describe("daily fleet report progress", () => {
     expect(markIngestionVehiclesRunning).toHaveBeenCalledTimes(2);
     expect(markIngestionVehicleResult).toHaveBeenCalledTimes(3);
   });
+
+  it("leaves pending vehicles when chunk deadline hits", async () => {
+    vi.mocked(processVehicle).mockImplementation(async ({ vehicle }) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return successfulResult(vehicle);
+    });
+    vi.mocked(getIngestionVehicleCounts).mockResolvedValue({
+      expected: 3,
+      successful: 2,
+      failed: 0,
+      pending: 1,
+    });
+
+    const result = await runDailyFleetReport({
+      reportDate: "2026-06-14",
+      sendTelegram: false,
+      softDeadlineMs: 1,
+    });
+
+    expect(result.deadlineHit).toBe(true);
+    expect(result.pendingVehicles).toBe(1);
+    expect(finalizeIngestionRun).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(markIngestionVehicleResult).mock.calls.some(
+        ([input]) => input.error === "deadline",
+      ),
+    ).toBe(false);
+  });
 });

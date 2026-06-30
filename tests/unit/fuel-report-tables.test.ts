@@ -28,4 +28,14 @@ describe("resolveFuelEventTableIndices", () => {
 
     expect(resolveFuelEventTableIndices({ stats, tables })).toEqual([0]);
   });
+
+  it("loads chronology for refills when fillings table is absent", () => {
+    const stats = [
+      { n: "Всего заправок", c: ["1"] },
+      { n: "Всего сливов", c: ["0"] },
+    ];
+    const tables = [{ name: "unit_chronology", rows: 6 }];
+
+    expect(resolveFuelEventTableIndices({ stats, tables })).toEqual([0]);
+  });
 });

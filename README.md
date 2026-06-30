@@ -65,6 +65,15 @@ Apply SQL migrations in Supabase SQL Editor:
 2. `supabase/migrations/002_trip_segments_metrics.sql`
 3. `supabase/migrations/003_daily_trips_fleet_metrics.sql`
 4. `supabase/migrations/004_date_range_ingestion_queue.sql`
+5. `supabase/migrations/005_vehicle_consumption_tier.sql` (if not already applied)
+6. `supabase/migrations/006_ingestion_event_log.sql` (required for ingestion diagnostics)
+7. `supabase/migrations/007_claim_queue_by_range.sql` (scoped queue claim for selected date range)
+
+For local debugging of import polling, enable client logs in the browser console:
+
+```js
+localStorage.setItem("fleet-debug", "1")
+```
 
 ## Scripts
 

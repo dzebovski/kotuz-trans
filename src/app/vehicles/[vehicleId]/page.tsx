@@ -26,7 +26,7 @@ import { Badge } from "@/components/Badge";
 import { CoveragePanel } from "@/components/report/CoveragePanel";
 import { ReportRangeFilters } from "@/components/report/ReportRangeFilters";
 import { VehicleSegmentsTable } from "@/components/vehicle/VehicleSegmentsTable";
-import { useRangeReport } from "@/hooks/useRangeReport";
+import { useVehicleReport } from "@/hooks/useVehicleReport";
 import { resolveInitialRange } from "@/lib/report/dates";
 import {
   formatDate,
@@ -139,13 +139,14 @@ function VehiclePageContent() {
     data,
     loading,
     mutating,
+    importActive,
     rangeRunStatus,
     error,
     applyRange,
     applyPreset,
-    runRangeImport,
-    runMutation,
-  } = useRangeReport({
+    runVehicleImport,
+  } = useVehicleReport({
+    vehicleId,
     initialFrom: initialRange.from,
     initialTo: initialRange.to,
     onRangeApplied: syncRangeToUrl,
@@ -155,7 +156,8 @@ function VehiclePageContent() {
   const [details, setDetails] = useState<VehicleDetailsResponse | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
-  const vehicle = data?.vehicles.find((item) => item.vehicle.id === vehicleId);
+  const vehicle = data?.vehicle;
+  const showVehicleDetails = Boolean(data?.partialReady && vehicle);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -181,7 +183,7 @@ function VehiclePageContent() {
   }
 
   useEffect(() => {
-    if (!data?.ready || !vehicle) {
+    if (!showVehicleDetails || !vehicle) {
       setDetails(null);
       setDetailsLoading(false);
       setDetailsError(null);
@@ -224,19 +226,30 @@ function VehiclePageContent() {
     return () => {
       cancelled = true;
     };
-  }, [data?.ready, from, to, vehicle, vehicleId]);
+  }, [showVehicleDetails, from, to, vehicle, vehicleId]);
 
   const listHref = `/?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-  const showReadyDetails = Boolean(data?.ready && vehicle);
   const segmentCount = details?.segments.length ?? 0;
   const refillCount = details?.refills.length ?? 0;
+  const refilledDetailsL =
+    details?.refills.reduce((sum, refill) => sum + refill.volumeL, 0) ?? 0;
   const missingRefillDetails =
-    showReadyDetails &&
+    showVehicleDetails &&
     !detailsLoading &&
     !detailsError &&
     Boolean(details) &&
     vehicle!.refillCount > 0 &&
     refillCount === 0;
+  const mismatchedRefillDetails =
+    showVehicleDetails &&
+    !detailsLoading &&
+    !detailsError &&
+    Boolean(details) &&
+    vehicle!.refillCount > 0 &&
+    (refillCount > vehicle!.refillCount ||
+      (refillCount > 0 &&
+        vehicle!.refilledL > 0 &&
+        Math.abs(refilledDetailsL - vehicle!.refilledL) / vehicle!.refilledL > 0.1));
 
   return (
     <div className="app-shell">
@@ -304,31 +317,25 @@ function VehiclePageContent() {
 
           <CoveragePanel
             coverage={data?.coverage ?? []}
+            from={from}
+            to={to}
+            vehicleId={vehicleId}
             loading={loading}
             mutating={mutating}
             ready={Boolean(data?.ready)}
+            scope="vehicle"
             runStatus={rangeRunStatus}
-            onImport={() => void runRangeImport("missing")}
-            onForceReload={() => void runRangeImport("force")}
-            onRetry={() => void runRangeImport("missing", true)}
-            onRefreshToday={
-              data?.coverage.some((day) => day.isToday)
-                ? () =>
-                    void runMutation(async () => {
-                      const response = await fetch("/api/reports/range/today", {
-                        method: "POST",
-                      });
-                      await readJsonResponse(response);
-                    })
-                : undefined
-            }
+            onImport={() => void runVehicleImport("missing")}
+            onForceReload={() => void runVehicleImport("force")}
+            onRetry={() => void runVehicleImport("missing", true)}
           />
 
-          {data?.partialReady ? (
+          {data?.partialReady &&
+          !data.ready &&
+          (mutating || importActive) ? (
             <div className="provisional-banner">
               <Clock3 size={16} />
-              Готово не всі дати. Деталі по машині з’являться як повний звіт
-              після завершення coverage.
+              Готово не всі дати для цієї машини. Решта довантажується у фоні.
             </div>
           ) : null}
 
@@ -338,22 +345,22 @@ function VehiclePageContent() {
             </section>
           ) : null}
 
-          {!loading && data && !data.ready ? (
+          {!loading && data && !data.partialReady ? (
             <section className="panel vehicle-page-placeholder">
               <p className="muted">
-                Для детального звіту потрібно довантажити всі дати вибраного
-                періоду.
+                Для детального звіту потрібно завантажити дані за вибраний
+                період.
               </p>
             </section>
           ) : null}
 
-          {!loading && data?.ready && !vehicle ? (
+          {!loading && data?.partialReady && !vehicle ? (
             <section className="panel vehicle-page-placeholder">
               <p className="muted">Машину не знайдено у вибраному періоді.</p>
             </section>
           ) : null}
 
-          {showReadyDetails && vehicle ? (
+          {showVehicleDetails && vehicle ? (
             <>
               {detailsError ? (
                 <div className="error-banner">{detailsError}</div>
@@ -364,6 +371,15 @@ function VehiclePageContent() {
                   <AlertTriangle size={16} />
                   У статистиці є заправки, але немає деталізації місця.
                   Спробуй повністю перезавантажити дані за період.
+                </div>
+              ) : null}
+
+              {mismatchedRefillDetails ? (
+                <div className="provisional-banner">
+                  <AlertTriangle size={16} />
+                  Кількість або обсяг заправок у списку не збігається зі
+                  зведенням. Перезавантаж дані за період, щоб оновити
+                  деталізацію.
                 </div>
               ) : null}
 
