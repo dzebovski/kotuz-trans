@@ -1702,6 +1702,172 @@ code,
   overflow: hidden;
 }
 
+.vehicle-segments-report {
+  background:
+    linear-gradient(118deg, var(--accent-muted), transparent 42%),
+    var(--bg-elevated);
+}
+
+.vehicle-segments-summary {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.45fr) minmax(330px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px;
+}
+
+.vehicle-segments-summary__route {
+  min-width: 0;
+  display: grid;
+  gap: 11px;
+}
+
+.vehicle-segments-summary__route-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.vehicle-segments-summary__route-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.vehicle-segments-summary__route-heading small {
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.vehicle-segments-summary__route-icon {
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 30%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--accent-muted);
+  color: var(--accent-strong);
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+}
+
+.vehicle-segments-summary__route-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.vehicle-segments-summary__route-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.vehicle-segments-summary__route-grid > svg {
+  color: var(--accent-strong);
+}
+
+.vehicle-segments-summary__route-grid small {
+  color: var(--text-subtle);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vehicle-segments-summary__route-grid strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.vehicle-segments-summary__route > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.vehicle-segments-summary__metrics {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.vehicle-segments-summary__metric {
+  min-width: 0;
+  min-height: 62px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+}
+
+.vehicle-segments-summary__metric > span {
+  color: var(--accent-strong);
+  display: grid;
+  place-items: center;
+}
+
+.vehicle-segments-summary__metric > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.vehicle-segments-summary__metric dt {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.vehicle-segments-summary__metric dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.vehicle-segments-summary__toggle {
+  border-color: color-mix(in srgb, var(--accent-strong) 52%, var(--border));
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+.vehicle-segments-summary__toggle:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-muted);
+}
+
+.vehicle-segments-report__details {
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  animation: vehicle-segments-details-in 160ms ease-out;
+}
+
+@keyframes vehicle-segments-details-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .daily-breakdown-table {
   min-width: 1080px;
   table-layout: auto;
@@ -1965,6 +2131,15 @@ code,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .vehicle-segments-summary {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .vehicle-segments-summary__toggle {
+    justify-self: start;
+  }
+
   .vehicle-refill-item {
     grid-template-columns: minmax(130px, 0.45fr) minmax(0, 1fr);
   }
@@ -2022,6 +2197,26 @@ code,
     grid-template-columns: 1fr;
   }
 
+  .vehicle-segments-summary__route-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vehicle-segments-summary__route-grid > svg {
+    transform: rotate(90deg);
+  }
+
+  .vehicle-segments-summary__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .vehicle-segments-summary__metric {
+    min-height: 0;
+  }
+
+  .vehicle-segments-summary__toggle {
+    width: 100%;
+  }
+
   .vehicle-refill-item {
     grid-template-columns: 1fr;
   }
@@ -2040,6 +2235,10 @@ code,
 
   .progress-track__fill {
     transition: none;
+  }
+
+  .vehicle-segments-report__details {
+    animation: none;
   }
 }
 

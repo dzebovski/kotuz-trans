@@ -25,7 +25,7 @@ import {
 import { Badge } from "@/components/Badge";
 import { CoveragePanel } from "@/components/report/CoveragePanel";
 import { ReportRangeFilters } from "@/components/report/ReportRangeFilters";
-import { VehicleSegmentsTable } from "@/components/vehicle/VehicleSegmentsTable";
+import { VehicleSegmentsReport } from "@/components/vehicle/VehicleSegmentsTable";
 import { useVehicleReport } from "@/hooks/useVehicleReport";
 import { resolveInitialRange } from "@/lib/report/dates";
 import {
@@ -157,7 +157,9 @@ function VehiclePageContent() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const vehicle = data?.vehicle;
-  const showVehicleDetails = Boolean(data?.partialReady && vehicle);
+  const showVehicleDetails = Boolean(
+    (data?.ready || data?.partialReady) && vehicle,
+  );
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -345,7 +347,7 @@ function VehiclePageContent() {
             </section>
           ) : null}
 
-          {!loading && data && !data.partialReady ? (
+          {!loading && data && !data.ready && !data.partialReady ? (
             <section className="panel vehicle-page-placeholder">
               <p className="muted">
                 Для детального звіту потрібно завантажити дані за вибраний
@@ -354,7 +356,7 @@ function VehiclePageContent() {
             </section>
           ) : null}
 
-          {!loading && data?.partialReady && !vehicle ? (
+          {!loading && (data?.ready || data?.partialReady) && !vehicle ? (
             <section className="panel vehicle-page-placeholder">
               <p className="muted">Машину не знайдено у вибраному періоді.</p>
             </section>
@@ -446,17 +448,25 @@ function VehiclePageContent() {
                     {detailsLoading ? "…" : segmentCount} сегментів
                   </Badge>
                 </div>
-                <div className="panel table-shell vehicle-detail-table-shell">
-                  {detailsLoading ? (
+                {detailsLoading ? (
+                  <div className="panel table-shell vehicle-detail-table-shell">
                     <div className="inline-loading">Завантажую сегменти…</div>
-                  ) : details?.segments.length ? (
-                    <VehicleSegmentsTable segments={details.segments} />
-                  ) : (
+                  </div>
+                ) : details?.segments.length ? (
+                  <VehicleSegmentsReport
+                    key={`${from}:${to}`}
+                    segments={details.segments}
+                    mileageKm={vehicle.mileageKm}
+                    movementDurationSeconds={vehicle.movementDurationSeconds}
+                    fuelConsumedL={vehicle.fuelConsumedL}
+                  />
+                ) : (
+                  <div className="panel table-shell vehicle-detail-table-shell">
                     <div className="empty-state empty-state--table">
                       Сегментів за цей період немає.
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </section>
 
               <section className="report-section" aria-label="Заправки">
