@@ -113,7 +113,7 @@ export async function runWialonReport(
     const stats = normalizeStatRows(applied.reportResult?.stats ?? []);
     const tables = applied.reportResult?.tables ?? [];
 
-    let rows: WialonTableRow[] = [];
+    const rows: WialonTableRow[] = [];
     if (loadRows && tables.length > 0) {
       const tableIndices =
         options.resolveTableIndices?.({ stats, tables }) ?? [0];
