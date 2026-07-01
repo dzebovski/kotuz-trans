@@ -10,6 +10,9 @@ import {
   isQueueItemClaimable,
   nextFleetPollDelayMs,
   resolveFleetImportKickAction,
+  vehicleForceImportHasRemainingDates,
+  vehicleImportNeedsPolling,
+  vehicleImportShouldPoll,
 } from "@/lib/report/coverage";
 import type { CoverageDay } from "@/lib/report/types";
 
@@ -182,6 +185,79 @@ describe("coverage helpers", () => {
       }),
     ).toBe(false);
     vi.useRealTimers();
+  });
+
+  it("keeps vehicle import polling active until report is ready", () => {
+    const coverage = [
+      day({ date: "2026-06-24", state: "ready", ready: true }),
+      day({ date: "2026-06-25", state: "missing" }),
+    ];
+    expect(vehicleImportNeedsPolling(coverage, false, true)).toBe(true);
+    expect(vehicleImportNeedsPolling(coverage, false, false)).toBe(false);
+    expect(vehicleImportNeedsPolling(coverage, true, true)).toBe(false);
+  });
+
+  it("detects remaining dates for force import after a processed day", () => {
+    const coverage = [
+      day({ date: "2026-06-24", state: "ready", ready: true }),
+      day({ date: "2026-06-25", state: "ready", ready: true }),
+      day({ date: "2026-06-26", state: "ready", ready: true }),
+    ];
+    expect(
+      vehicleForceImportHasRemainingDates({
+        coverage,
+        afterDate: null,
+      }),
+    ).toBe(true);
+    expect(
+      vehicleForceImportHasRemainingDates({
+        coverage,
+        afterDate: "2026-06-24",
+      }),
+    ).toBe(true);
+    expect(
+      vehicleForceImportHasRemainingDates({
+        coverage,
+        afterDate: "2026-06-26",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps force import polling active when report is already ready", () => {
+    const coverage = [
+      day({ date: "2026-06-24", state: "ready", ready: true }),
+      day({ date: "2026-06-25", state: "ready", ready: true }),
+    ];
+    expect(
+      vehicleImportShouldPoll({
+        coverage,
+        ready: true,
+        importActive: true,
+        mode: "force",
+        afterDate: null,
+        forceAwaitingIdle: true,
+      }),
+    ).toBe(true);
+    expect(
+      vehicleImportShouldPoll({
+        coverage,
+        ready: true,
+        importActive: true,
+        mode: "force",
+        afterDate: "2026-06-25",
+        forceAwaitingIdle: true,
+      }),
+    ).toBe(true);
+    expect(
+      vehicleImportShouldPoll({
+        coverage,
+        ready: true,
+        importActive: true,
+        mode: "missing",
+        afterDate: null,
+        forceAwaitingIdle: false,
+      }),
+    ).toBe(false);
   });
 });
 

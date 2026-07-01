@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ChevronRight,
   Clock3,
+  Droplets,
   Fuel,
   Gauge,
   LogOut,
@@ -31,6 +32,7 @@ import { resolveInitialRange } from "@/lib/report/dates";
 import {
   formatDate,
   formatDuration,
+  formatFuelEventLocation,
   formatNum,
   formatTime,
   readJsonResponse,
@@ -76,10 +78,6 @@ function DetailStat({ label, value }: { label: string; value: string }) {
       <strong className="mono">{value}</strong>
     </span>
   );
-}
-
-function formatAddress(address: string | null): string {
-  return address?.trim() ? address : "—";
 }
 
 function mapHref(latitude: number | null, longitude: number | null): string | null {
@@ -228,14 +226,44 @@ function VehiclePageContent() {
     return () => {
       cancelled = true;
     };
-  }, [showVehicleDetails, from, to, vehicle, vehicleId]);
+  }, [
+    showVehicleDetails,
+    from,
+    to,
+    vehicle,
+    vehicleId,
+    vehicle?.drainCount,
+    vehicle?.drainedL,
+    importActive,
+  ]);
 
   const listHref = `/?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  const readyDates = new Set(
+    (data?.coverage ?? []).filter((day) => day.ready).map((day) => day.date),
+  );
+  const detailsReady = data?.ready ?? false;
+  const scopedRefills =
+    details?.refills.filter(
+      (refill) => detailsReady || readyDates.has(refill.reportDate),
+    ) ?? [];
+  const scopedDrains =
+    details?.drains.filter(
+      (drain) => detailsReady || readyDates.has(drain.reportDate),
+    ) ?? [];
   const segmentCount = details?.segments.length ?? 0;
-  const refillCount = details?.refills.length ?? 0;
-  const refilledDetailsL =
-    details?.refills.reduce((sum, refill) => sum + refill.volumeL, 0) ?? 0;
+  const refillCount = scopedRefills.length;
+  const refilledDetailsL = scopedRefills.reduce(
+    (sum, refill) => sum + refill.volumeL,
+    0,
+  );
+  const drainCount = scopedDrains.length;
+  const drainedDetailsL = scopedDrains.reduce(
+    (sum, drain) => sum + drain.volumeL,
+    0,
+  );
+  const compareDetailsWithSummary = detailsReady;
   const missingRefillDetails =
+    compareDetailsWithSummary &&
     showVehicleDetails &&
     !detailsLoading &&
     !detailsError &&
@@ -243,6 +271,7 @@ function VehiclePageContent() {
     vehicle!.refillCount > 0 &&
     refillCount === 0;
   const mismatchedRefillDetails =
+    compareDetailsWithSummary &&
     showVehicleDetails &&
     !detailsLoading &&
     !detailsError &&
@@ -252,6 +281,25 @@ function VehiclePageContent() {
       (refillCount > 0 &&
         vehicle!.refilledL > 0 &&
         Math.abs(refilledDetailsL - vehicle!.refilledL) / vehicle!.refilledL > 0.1));
+  const missingDrainDetails =
+    compareDetailsWithSummary &&
+    showVehicleDetails &&
+    !detailsLoading &&
+    !detailsError &&
+    Boolean(details) &&
+    vehicle!.drainCount > 0 &&
+    drainCount === 0;
+  const mismatchedDrainDetails =
+    compareDetailsWithSummary &&
+    showVehicleDetails &&
+    !detailsLoading &&
+    !detailsError &&
+    Boolean(details) &&
+    vehicle!.drainCount > 0 &&
+    (drainCount > vehicle!.drainCount ||
+      (drainCount > 0 &&
+        vehicle!.drainedL > 0 &&
+        Math.abs(drainedDetailsL - vehicle!.drainedL) / vehicle!.drainedL > 0.1));
 
   return (
     <div className="app-shell">
@@ -385,6 +433,23 @@ function VehiclePageContent() {
                 </div>
               ) : null}
 
+              {missingDrainDetails ? (
+                <div className="provisional-banner">
+                  <AlertTriangle size={16} />
+                  У статистиці є зливи, але немає деталізації місця.
+                  Спробуй повністю перезавантажити дані за період.
+                </div>
+              ) : null}
+
+              {mismatchedDrainDetails ? (
+                <div className="provisional-banner">
+                  <AlertTriangle size={16} />
+                  Кількість або обсяг зливів у списку не збігається зі
+                  зведенням. Перезавантаж дані за період, щоб оновити
+                  деталізацію.
+                </div>
+              ) : null}
+
               <section className="vehicle-metric-grid" aria-label="Показники машини">
                 <VehicleMetricCard
                   icon={<Route size={18} />}
@@ -407,6 +472,11 @@ function VehiclePageContent() {
                     value={vehicle.refillCount.toString()}
                   />
                   <DetailStat label="Залито" value={formatNum(vehicle.refilledL, " l")} />
+                  <DetailStat
+                    label="Зливів"
+                    value={vehicle.drainCount.toString()}
+                  />
+                  <DetailStat label="Злито" value={formatNum(vehicle.drainedL, " l")} />
                 </VehicleMetricCard>
 
                 <VehicleMetricCard
@@ -417,6 +487,10 @@ function VehiclePageContent() {
                   <DetailStat
                     label="Час руху"
                     value={formatDuration(vehicle.movementDurationSeconds)}
+                  />
+                  <DetailStat
+                    label="> 86 км/г"
+                    value={formatDuration(vehicle.overSpeedLimitDurationSeconds)}
                   />
                 </VehicleMetricCard>
 
@@ -456,6 +530,7 @@ function VehiclePageContent() {
                   <VehicleSegmentsReport
                     key={`${from}:${to}`}
                     segments={details.segments}
+                    consumptionTier={vehicle.vehicle.consumptionTier ?? null}
                     mileageKm={vehicle.mileageKm}
                     movementDurationSeconds={vehicle.movementDurationSeconds}
                     fuelConsumedL={vehicle.fuelConsumedL}
@@ -483,8 +558,8 @@ function VehiclePageContent() {
                 <div className="panel vehicle-refill-list">
                   {detailsLoading ? (
                     <div className="inline-loading">Завантажую заправки…</div>
-                  ) : details?.refills.length ? (
-                    details.refills.map((refill) => {
+                  ) : scopedRefills.length ? (
+                    scopedRefills.map((refill) => {
                       const href = mapHref(refill.latitude, refill.longitude);
                       return (
                         <article className="vehicle-refill-item" key={refill.id}>
@@ -492,7 +567,13 @@ function VehiclePageContent() {
                             <strong className="mono">{formatNum(refill.volumeL, " l")}</strong>
                             <span className="mono">{formatTime(refill.eventTime)}</span>
                           </div>
-                          <p>{formatAddress(refill.address)}</p>
+                          <p>
+                            {formatFuelEventLocation(
+                              refill.address,
+                              refill.latitude,
+                              refill.longitude,
+                            )}
+                          </p>
                           {href ? (
                             <a
                               className="button button--ghost"
@@ -512,6 +593,60 @@ function VehiclePageContent() {
                   ) : (
                     <div className="empty-state empty-state--table">
                       Заправок за цей період немає.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="report-section" aria-label="Зливи">
+                <div className="section-heading">
+                  <div>
+                    <h3>Зливи</h3>
+                    <p className="muted">Де був злив і скільки паливо зникло.</p>
+                  </div>
+                  <Badge tone={drainCount > 0 ? "danger" : undefined}>
+                    <Droplets size={13} />
+                    {detailsLoading ? "…" : drainCount} подій
+                  </Badge>
+                </div>
+                <div className="panel vehicle-refill-list">
+                  {detailsLoading ? (
+                    <div className="inline-loading">Завантажую зливи…</div>
+                  ) : scopedDrains.length ? (
+                    scopedDrains.map((drain) => {
+                      const href = mapHref(drain.latitude, drain.longitude);
+                      return (
+                        <article className="vehicle-refill-item" key={drain.id}>
+                          <div>
+                            <strong className="mono">{formatNum(drain.volumeL, " l")}</strong>
+                            <span className="mono">{formatTime(drain.eventTime)}</span>
+                          </div>
+                          <p>
+                            {formatFuelEventLocation(
+                              drain.address,
+                              drain.latitude,
+                              drain.longitude,
+                            )}
+                          </p>
+                          {href ? (
+                            <a
+                              className="button button--ghost"
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <MapPin size={15} />
+                              Мапа
+                            </a>
+                          ) : (
+                            <span className="muted">Координат немає</span>
+                          )}
+                        </article>
+                      );
+                    })
+                  ) : (
+                    <div className="empty-state empty-state--table">
+                      Зливів за цей період немає.
                     </div>
                   )}
                 </div>

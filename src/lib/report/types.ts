@@ -38,12 +38,15 @@ export type RangeDay = {
   averageFuelConsumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number | null;
+  overSpeedLimitDurationSeconds: number | null;
   averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number | null;
   maxSpeedKmh: number | null;
   refillCount: number;
   refilledL: number;
+  drainCount: number;
+  drainedL: number;
   fuelStatus: string;
   routeKey: string | null;
   startCountryCode: string | null;
@@ -63,12 +66,15 @@ export type RangeVehicle = {
   consumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number;
+  overSpeedLimitDurationSeconds: number;
   averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number;
   maxSpeedKmh: number | null;
   refillCount: number;
   refilledL: number;
+  drainCount: number;
+  drainedL: number;
   fuelStatus: string | null;
   highDays: number;
   days: RangeDay[];
@@ -85,6 +91,7 @@ export type RangeResponse = {
     totalMileageKm: number;
     totalFuelL: number;
     totalMovementSeconds: number;
+    totalOverSpeedLimitSeconds: number;
     fuelStatusCounts: {
       normal: number;
       avrg: number;
@@ -110,10 +117,20 @@ export type RunRangeResponse = {
   remaining?: number;
 };
 
+export type EnsureSkipReason =
+  | "already_final"
+  | "already_queued_or_running"
+  | "queue_failed_needs_retry";
+
+export type EnsureSkippedDate = {
+  date: string;
+  reason: EnsureSkipReason;
+};
+
 export type EnsureRangeResponse = {
   ok: boolean;
   queued: string[];
-  skipped: string[];
+  skipped: EnsureSkippedDate[];
 };
 
 export type VehicleTripSegment = {
@@ -148,9 +165,12 @@ export type VehicleFuelRefill = {
   address: string | null;
 };
 
+export type VehicleFuelDrain = VehicleFuelRefill;
+
 export type VehicleDetailsResponse = {
   segments: VehicleTripSegment[];
   refills: VehicleFuelRefill[];
+  drains: VehicleFuelDrain[];
 };
 
 export type VehicleReportResponse = {
@@ -172,6 +192,9 @@ export type VehicleIngestResponse = {
     | "blocked";
   reportDate?: string;
   reason?: string | null;
+  rangeDrainsSynced?: boolean;
+  rangeDrainsUpserted?: number;
+  warnings?: string[];
 };
 
 export type CoverageDiagnosticsVehicle = {

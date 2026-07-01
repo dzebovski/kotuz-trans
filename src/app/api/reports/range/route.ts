@@ -82,6 +82,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               (sum, vehicle) => sum + vehicle.movementDurationSeconds,
               0,
             ),
+            totalOverSpeedLimitSeconds: vehicles.reduce(
+              (sum, vehicle) => sum + vehicle.overSpeedLimitDurationSeconds,
+              0,
+            ),
             fuelStatusCounts: countFuelStatusByVehicle(vehicles),
           }
         : null;

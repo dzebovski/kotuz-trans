@@ -11,6 +11,7 @@ import {
   findNextVehicleIngestDate,
   ingestVehicleForDate,
 } from "@/jobs/ingest-vehicle-date";
+import { ingestVehicleFuelDrainsForRange } from "@/jobs/ingest-vehicle-fuel-drains-range";
 import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/run-daily-fleet-report";
 import { requireUser } from "@/lib/auth/require-user";
 import type { CoverageDay } from "@/lib/report/types";
@@ -23,6 +24,63 @@ export const maxDuration = 300;
 type RouteContext = {
   params: Promise<{ vehicleId: string }>;
 };
+
+function buildCoverageByDate(
+  dates: string[],
+  coverage: CoverageDay[],
+  ingestionRows: Awaited<ReturnType<typeof listVehicleIngestionStatusForRange>>,
+): Map<string, { ready: boolean; state: string; fleetRunning: boolean }> {
+  return new Map(
+    dates.map((date) => {
+      const day = coverage.find((item) => item.date === date);
+      const ingestion = ingestionRows.find((row) => row.reportDate === date);
+      return [
+        date,
+        {
+          ready: day?.ready ?? false,
+          state: day?.state ?? "missing",
+          fleetRunning: Boolean(
+            ingestion?.runStatus === "running" &&
+              ingestion.runHeartbeatAt &&
+              isFleetRunActivelyProcessing({
+                status: ingestion.runStatus,
+                heartbeatAt: ingestion.runHeartbeatAt,
+              }),
+          ),
+        },
+      ] as const;
+    }),
+  );
+}
+
+async function maybeSyncRangeDrains(input: {
+  vehicle: NonNullable<Awaited<ReturnType<typeof getVehicleById>>>;
+  range: { from: string; to: string; dates: string[] };
+  mode: "missing" | "force";
+  afterDate: string | null;
+  coverageByDate: Map<
+    string,
+    { ready: boolean; state: string; fleetRunning: boolean }
+  >;
+}): Promise<Awaited<ReturnType<typeof ingestVehicleFuelDrainsForRange>> | null> {
+  const nextAfter = findNextVehicleIngestDate({
+    dates: input.range.dates,
+    mode: input.mode,
+    afterDate: input.afterDate,
+    coverageByDate: input.coverageByDate,
+  });
+  if (nextAfter.date || nextAfter.blocked) {
+    return null;
+  }
+  if (input.mode !== "force" || input.range.dates.length <= 1) {
+    return null;
+  }
+  return ingestVehicleFuelDrainsForRange({
+    vehicle: input.vehicle,
+    from: input.range.from,
+    to: input.range.to,
+  });
+}
 
 function buildCoverage(
   dates: string[],
@@ -130,26 +188,10 @@ export async function POST(
       trips,
       ingestionRows,
     );
-    const coverageByDate = new Map(
-      range.dates.map((date) => {
-        const day = coverage.find((item) => item.date === date);
-        const ingestion = ingestionRows.find((row) => row.reportDate === date);
-        return [
-          date,
-          {
-            ready: day?.ready ?? false,
-            state: day?.state ?? "missing",
-            fleetRunning: Boolean(
-              ingestion?.runStatus === "running" &&
-                ingestion.runHeartbeatAt &&
-                isFleetRunActivelyProcessing({
-                  status: ingestion.runStatus,
-                  heartbeatAt: ingestion.runHeartbeatAt,
-                }),
-            ),
-          },
-        ] as const;
-      }),
+    const coverageByDate = buildCoverageByDate(
+      range.dates,
+      coverage,
+      ingestionRows,
     );
 
     const next = findNextVehicleIngestDate({
@@ -168,6 +210,23 @@ export async function POST(
     }
 
     if (!next.date) {
+      const rangeDrains = await maybeSyncRangeDrains({
+        vehicle,
+        range: { from: range.from, to: range.to, dates: range.dates },
+        mode: body.mode,
+        afterDate: body.afterDate ?? null,
+        coverageByDate,
+      });
+      if (rangeDrains) {
+        return NextResponse.json({
+          ok: true,
+          status: "idle",
+          rangeDrainsSynced: true,
+          rangeDrainsUpserted: rangeDrains.upserted,
+          warnings: rangeDrains.warnings,
+        });
+      }
+
       return NextResponse.json({
         ok: true,
         status: "idle",
@@ -181,6 +240,34 @@ export async function POST(
       softDeadlineMs: env.JOB_SOFT_DEADLINE_MS ?? 270_000,
     });
 
+    const [tripsAfter, ingestionRowsAfter] = await Promise.all([
+      listDailyTripsForVehicleInRange(vehicleId, range.from, range.to),
+      listVehicleIngestionStatusForRange(
+        DAILY_FLEET_REPORT_JOB_NAME,
+        vehicleId,
+        range.from,
+        range.to,
+      ),
+    ]);
+    const coverageAfter = buildCoverage(
+      range.dates,
+      range.today,
+      tripsAfter,
+      ingestionRowsAfter,
+    );
+    const coverageByDateAfter = buildCoverageByDate(
+      range.dates,
+      coverageAfter,
+      ingestionRowsAfter,
+    );
+    const rangeDrains = await maybeSyncRangeDrains({
+      vehicle,
+      range: { from: range.from, to: range.to, dates: range.dates },
+      mode: body.mode,
+      afterDate: result.reportDate,
+      coverageByDate: coverageByDateAfter,
+    });
+
     return NextResponse.json({
       ok:
         result.status === "completed" ||
@@ -189,6 +276,9 @@ export async function POST(
       status: result.status,
       reportDate: result.reportDate,
       reason: result.reason ?? null,
+      rangeDrainsSynced: Boolean(rangeDrains),
+      rangeDrainsUpserted: rangeDrains?.upserted ?? 0,
+      warnings: rangeDrains?.warnings ?? [],
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

@@ -78,7 +78,9 @@ describe("enqueueMissingDatesForRange", () => {
       mode: "missing",
     });
 
-    expect(result.skipped).toEqual(["2026-06-22"]);
+    expect(result.skipped).toEqual([
+      { date: "2026-06-22", reason: "already_final" },
+    ]);
     expect(enqueueIngestionDate).not.toHaveBeenCalled();
   });
 
@@ -148,7 +150,7 @@ describe("enqueueMissingDatesForRange", () => {
 
     expect(result).toEqual({
       queued: ["2026-06-21", "2026-06-22"],
-      skipped: ["2026-06-20"],
+      skipped: [{ date: "2026-06-20", reason: "already_final" }],
     });
     expect(enqueueIngestionDate).toHaveBeenCalledTimes(2);
     expect(enqueueIngestionDate).toHaveBeenNthCalledWith(

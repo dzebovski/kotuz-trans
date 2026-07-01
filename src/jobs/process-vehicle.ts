@@ -1,5 +1,8 @@
 import { DateTime } from "luxon";
-import { evaluateFuelConsumptionStatus } from "@/analytics/fuel-consumption-status";
+import {
+  evaluateFuelConsumptionStatus,
+  isConsumptionEvaluable,
+} from "@/analytics/fuel-consumption-status";
 import { calculateRolling1000KmConsumption } from "@/analytics/rolling-fuel";
 import { normalizeCountryCode } from "@/analytics/country-normalizer";
 import { classifyRoute } from "@/analytics/route-classifier";
@@ -20,13 +23,16 @@ import { log } from "@/utils/logger";
 import { isWithinPercentTolerance } from "@/utils/numbers";
 import type { BusinessDayInterval } from "@/utils/time";
 import { WialonClient } from "@/wialon/client";
-import { parseFuelEvents } from "@/wialon/parsers/fuel-events";
+import { enrichFuelEventAddresses } from "@/wialon/enrich-fuel-event-addresses";
+import { parseFuelEventsFromReport } from "@/wialon/parsers/fuel-events";
 import {
   parseFuelReport,
   resolveFuelEventTableIndices,
   shouldLoadFuelChronology,
 } from "@/wialon/parsers/fuel-report";
 import { parseTripsDailyStats, parseTripsReport } from "@/wialon/parsers/trips-report";
+import { parseSpeedChartOverLimitDuration } from "@/wialon/parsers/speed-chart";
+import { loadOverSpeedDurationFromMessages } from "@/wialon/parsers/speed-messages";
 import { runWialonReport } from "@/wialon/report-runner";
 import { WialonError } from "@/wialon/errors";
 
@@ -117,6 +123,7 @@ export async function processVehicle(input: {
       {
         client,
         loadRows: true,
+        fetchChartJson: true,
         resolveTableIndices: ({ stats, tables }) =>
           resolveFuelEventTableIndices({ stats, tables: tables ?? [] }),
       },
@@ -126,6 +133,27 @@ export async function processVehicle(input: {
       stats: fuelResult.stats,
       rows: fuelResult.rows,
     });
+    const speedChartParsed = parseSpeedChartOverLimitDuration(fuelResult.chartJson);
+    let overSpeedParsed = speedChartParsed.result;
+    if (fuelResult.chartFetchWarning) {
+      warnings.push(fuelResult.chartFetchWarning);
+    }
+    if (!overSpeedParsed) {
+      if (speedChartParsed.warning) {
+        warnings.push(speedChartParsed.warning);
+      }
+      const speedMessagesParsed = await loadOverSpeedDurationFromMessages(
+        client,
+        input.vehicle.wialon_unit_id,
+        input.interval.fromUnix,
+        input.interval.toUnix,
+      );
+      if (speedMessagesParsed.result) {
+        overSpeedParsed = speedMessagesParsed.result;
+      } else if (speedMessagesParsed.warning) {
+        warnings.push(speedMessagesParsed.warning);
+      }
+    }
     if (!shouldLoadFuelChronology(fuelParsed.daily)) {
       fuelParsed.chronologyRows = [];
     }
@@ -180,15 +208,52 @@ export async function processVehicle(input: {
     const highwayRatio =
       mileageKm > 0 ? Math.min(1, Math.max(0, highwayMileageKm / mileageKm)) : null;
 
-    const fuelStatus = dataQualityBlocked
-      ? "not_evaluated"
-      : evaluateFuelConsumptionStatus(
-          fuelParsed.daily.averageFuelConsumptionLPer100Km,
-          input.vehicle.consumption_tier,
-        );
+    const fuelStatus =
+      dataQualityBlocked || !isConsumptionEvaluable(mileageKm)
+        ? "not_evaluated"
+        : evaluateFuelConsumptionStatus(
+            fuelParsed.daily.averageFuelConsumptionLPer100Km,
+            input.vehicle.consumption_tier,
+          );
 
-    const fuelEventsParsed = parseFuelEvents(fuelParsed.chronologyRows);
+    const fuelEventsParsed = shouldLoadFuelChronology(fuelParsed.daily)
+      ? parseFuelEventsFromReport({
+          stats: fuelResult.stats,
+          rows: fuelResult.rows,
+          tables: fuelResult.tables ?? [],
+        })
+      : { events: [], warnings: [] };
     warnings.push(...fuelEventsParsed.warnings);
+
+    await enrichFuelEventAddresses(client, fuelEventsParsed.events);
+
+    const parsedDrains = fuelEventsParsed.events.filter(
+      (event) => event.eventType === "drain",
+    );
+    const parsedDrainCount = parsedDrains.length;
+    const parsedDrainedL = parsedDrains.reduce(
+      (sum, event) => sum + event.volumeL,
+      0,
+    );
+    if (
+      fuelParsed.daily.drainCount > 0 &&
+      parsedDrainCount !== fuelParsed.daily.drainCount
+    ) {
+      warnings.push(
+        `Drain count mismatch: stats=${fuelParsed.daily.drainCount}, parsed=${parsedDrainCount}`,
+      );
+    }
+    if (
+      fuelParsed.daily.drainedL > 0 &&
+      parsedDrainedL > 0 &&
+      Math.abs(parsedDrainedL - fuelParsed.daily.drainedL) /
+        fuelParsed.daily.drainedL >
+        0.1
+    ) {
+      warnings.push(
+        `Drained volume mismatch: stats=${fuelParsed.daily.drainedL}, parsed=${parsedDrainedL}`,
+      );
+    }
 
     const segments: TripSegmentUpsert[] = route.segments.map((segment) => ({
       source_table_index: 0,
@@ -249,7 +314,6 @@ export async function processVehicle(input: {
       })),
     ]);
 
-    // TODO: precise time/distance above 86 km/h requires a separate Wialon report or raw GPS messages.
     const dailyTrip: DailyTripUpsert = {
       vehicle_id: input.vehicle.id,
       ingestion_run_id: input.ingestionRunId,
@@ -288,6 +352,8 @@ export async function processVehicle(input: {
       anomaly_status: fuelStatus,
       is_anomaly: fuelStatus === "high",
       movement_duration_seconds: tripsDailyStats.movementDurationSeconds,
+      over_speed_limit_duration_seconds:
+        overSpeedParsed?.durationSeconds ?? null,
       stop_count: tripsDailyStats.stopCount,
       parking_duration_seconds: tripsDailyStats.parkingDurationSeconds,
       parking_count_from_trips: tripsDailyStats.parkingCountFromTrips,

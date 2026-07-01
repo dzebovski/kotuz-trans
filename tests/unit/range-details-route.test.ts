@@ -8,6 +8,7 @@ vi.mock("@/config/env", () => ({
   getServerEnv: vi.fn(() => ({ BUSINESS_TIMEZONE: "Europe/Kyiv" })),
 }));
 vi.mock("@/db/trips-repository", () => ({
+  listFuelDrainsForVehicleRange: vi.fn(),
   listFuelRefillsForVehicleRange: vi.fn(),
   listTripSegmentsForDailyTrip: vi.fn(),
   listTripSegmentsForVehicleRange: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/db/trips-repository", () => ({
 
 import { GET } from "@/app/api/reports/range/details/route";
 import {
+  listFuelDrainsForVehicleRange,
   listFuelRefillsForVehicleRange,
   listTripSegmentsForVehicleRange,
 } from "@/db/trips-repository";
@@ -32,9 +34,10 @@ describe("range details GET route", () => {
     vi.mocked(requireUser).mockResolvedValue({ id: "user-1" } as never);
     vi.mocked(listTripSegmentsForVehicleRange).mockResolvedValue([]);
     vi.mocked(listFuelRefillsForVehicleRange).mockResolvedValue([]);
+    vi.mocked(listFuelDrainsForVehicleRange).mockResolvedValue([]);
   });
 
-  it("returns segments and refills for a selected vehicle and range", async () => {
+  it("returns segments, refills and drains for a selected vehicle and range", async () => {
     vi.mocked(listTripSegmentsForVehicleRange).mockResolvedValue([
       {
         id: "segment-1",
@@ -69,6 +72,18 @@ describe("range details GET route", () => {
         address: "Fuel station",
       },
     ]);
+    vi.mocked(listFuelDrainsForVehicleRange).mockResolvedValue([
+      {
+        id: "drain-1",
+        dailyTripId: "trip-1",
+        reportDate: "2026-06-22",
+        eventTime: "2026-06-22T11:00:00Z",
+        volumeL: 45,
+        latitude: 50.1,
+        longitude: 30.1,
+        address: "Parking lot",
+      },
+    ]);
 
     const response = await GET(
       request("vehicleId=vehicle-1&from=2026-06-22&to=2026-06-22"),
@@ -78,12 +93,18 @@ describe("range details GET route", () => {
     expect(response.status).toBe(200);
     expect(json.segments).toHaveLength(1);
     expect(json.refills).toHaveLength(1);
+    expect(json.drains).toHaveLength(1);
     expect(listTripSegmentsForVehicleRange).toHaveBeenCalledWith({
       vehicleId: "vehicle-1",
       from: "2026-06-22",
       to: "2026-06-22",
     });
     expect(listFuelRefillsForVehicleRange).toHaveBeenCalledWith({
+      vehicleId: "vehicle-1",
+      from: "2026-06-22",
+      to: "2026-06-22",
+    });
+    expect(listFuelDrainsForVehicleRange).toHaveBeenCalledWith({
       vehicleId: "vehicle-1",
       from: "2026-06-22",
       to: "2026-06-22",

@@ -74,12 +74,15 @@ describe("range GET route", () => {
         averageFuelConsumptionLPer100Km: 25,
         rolling1000KmConsumptionLPer100Km: 24,
         movementDurationSeconds: 3600,
+        overSpeedLimitDurationSeconds: null,
         averageSpeedKmh: 120,
         parkingCount: 1,
         parkingDurationSeconds: 600,
         maxSpeedKmh: 80,
         refillCount: 3,
         refilledL: 245,
+        drainCount: 1,
+        drainedL: 40,
         fuelStatus: "normal",
         routeKey: null,
         vehicle: {
@@ -101,6 +104,8 @@ describe("range GET route", () => {
     expect(json.vehicles).toHaveLength(1);
     expect(json.vehicles[0].refillCount).toBe(3);
     expect(json.vehicles[0].refilledL).toBe(245);
+    expect(json.vehicles[0].drainCount).toBe(1);
+    expect(json.vehicles[0].drainedL).toBe(40);
     expect(json.vehicles[0].averageSpeedKmh).toBe(120);
     expect(listDailyTripsForDates).toHaveBeenCalledWith(["2026-06-22"]);
     expect(enqueueMissingDatesForRange).not.toHaveBeenCalled();

@@ -11,7 +11,7 @@ import {
   getKyivDate,
 } from "@/lib/report/dates";
 import { fleetDebug } from "@/lib/report/debug";
-import { formatDate, readJsonResponse } from "@/lib/report/format";
+import { formatDate, buildEnsureRunStatusMessage, readJsonResponse } from "@/lib/report/format";
 import {
   isAbortError,
   shouldApplyRangeResponse,
@@ -61,6 +61,7 @@ export function useRangeReport({
   const idleKickCountRef = useRef(0);
   const rangeKeyRef = useRef(toRangeKey(initialFrom, initialTo));
   const abortControllerRef = useRef<AbortController | null>(null);
+  const dataRef = useRef<RangeResponse | null>(null);
   const mountedRef = useRef(true);
   const fromRef = useRef(from);
   const toRef = useRef(to);
@@ -68,6 +69,7 @@ export function useRangeReport({
   mutatingRef.current = mutating;
   fromRef.current = from;
   toRef.current = to;
+  dataRef.current = data;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -221,6 +223,11 @@ export function useRangeReport({
         return json;
       }
 
+      if (dataRef.current === null) {
+        await load(true);
+        return json;
+      }
+
       setData((current) =>
         current && isCurrentRange(requestFrom, requestTo, rangeKey)
           ? {
@@ -278,7 +285,9 @@ export function useRangeReport({
   }, [from, to]);
 
   const shouldPollCoverage = Boolean(
-    data && !data.ready && (mutating || isImportActive(data.coverage)),
+    mutating && (!data || !data.ready),
+  ) || Boolean(
+    data && !data.ready && isImportActive(data.coverage),
   );
 
   const recordKickResult = useCallback(
@@ -457,6 +466,9 @@ export function useRangeReport({
   ]);
 
   function applyRange(): void {
+    if (draftFrom === from && draftTo === to) {
+      return;
+    }
     abortControllerRef.current?.abort();
     setError(null);
     setData(null);
@@ -469,6 +481,9 @@ export function useRangeReport({
   function applyPreset(days: 1 | 7 | 30 | 90): void {
     const end = getKyivDate(-1);
     const start = dateDaysAgo(days - 1, end);
+    if (start === from && end === to) {
+      return;
+    }
     abortControllerRef.current?.abort();
     setDraftFrom(start);
     setDraftTo(end);
@@ -506,12 +521,8 @@ export function useRangeReport({
         ensureResponse,
       );
       fleetDebug("range_ensure_result", ensureResult);
-      await loadStatus();
-      setRangeRunStatus(
-        ensureResult.queued.length > 0
-          ? `У черзі ${ensureResult.queued.length} дат. Запускаю обробку…`
-          : "Черга вже заповнена. Продовжую обробку…",
-      );
+      await load(true);
+      setRangeRunStatus(buildEnsureRunStatusMessage(ensureResult));
     } catch (runError) {
       if (!isAbortError(runError)) {
         setError(

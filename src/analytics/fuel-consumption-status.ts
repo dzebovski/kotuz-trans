@@ -13,6 +13,19 @@ export const FUEL_STATUS_RANK: Record<FuelConsumptionStatus, number> = {
   high: 3,
 };
 
+/** Minimum daily mileage before l/100km and fuel status are meaningful. */
+export const MIN_MILEAGE_KM_FOR_CONSUMPTION_EVAL = 10;
+
+export function isConsumptionEvaluable(
+  mileageKm: number | null | undefined,
+): boolean {
+  return (
+    mileageKm != null &&
+    !Number.isNaN(mileageKm) &&
+    mileageKm >= MIN_MILEAGE_KM_FOR_CONSUMPTION_EVAL
+  );
+}
+
 export function getConsumptionBounds(tier: ConsumptionTier): {
   normalMax: number;
   avrgMax: number;
@@ -23,7 +36,11 @@ export function getConsumptionBounds(tier: ConsumptionTier): {
 export function evaluateFuelConsumptionStatus(
   actualLPer100Km: number | null,
   tier: ConsumptionTier | null,
+  mileageKm?: number | null,
 ): FuelConsumptionStatus {
+  if (mileageKm !== undefined && !isConsumptionEvaluable(mileageKm)) {
+    return "not_evaluated";
+  }
   if (actualLPer100Km == null || tier == null) {
     return "not_evaluated";
   }
@@ -71,6 +88,35 @@ export function fuelStatusBadgeTone(
   return undefined;
 }
 
+export function fuelStatusTextClass(
+  status: FuelConsumptionStatus | string,
+): string | undefined {
+  const tone = fuelStatusBadgeTone(status);
+  if (tone === "success") {
+    return "fuel-consumption-text--success";
+  }
+  if (tone === "avrg") {
+    return "fuel-consumption-text--avrg";
+  }
+  if (tone === "danger") {
+    return "fuel-consumption-text--danger";
+  }
+  return undefined;
+}
+
+export function getSegmentFuelConsumptionClass(
+  actualLPer100Km: number | null,
+  tier: ConsumptionTier | null,
+  mileageKm?: number | null,
+): string | undefined {
+  if (mileageKm !== undefined && !isConsumptionEvaluable(mileageKm)) {
+    return undefined;
+  }
+  return fuelStatusTextClass(
+    evaluateFuelConsumptionStatus(actualLPer100Km, tier),
+  );
+}
+
 export function formatReportDaysLabel(count: number): string {
   const n = Math.abs(count);
   const mod10 = n % 10;
@@ -90,10 +136,10 @@ export function fuelStatusLabel(
   status: FuelConsumptionStatus | string | null | undefined,
 ): string | null {
   if (status === "normal") {
-    return "нормальний розхід";
+    return "чудовий розхід";
   }
   if (status === "avrg") {
-    return "середній розхід";
+    return "нормальний розхід";
   }
   if (status === "high") {
     return "високий розхід";
@@ -129,6 +175,10 @@ export function formatFuelStatusBadgeLabel(
     return titled;
   }
   return `${titled} - ${formatFuelLitersForBadge(consumptionLPer100Km)}`;
+}
+
+export function formatHighDaysBadgeLabel(count: number): string {
+  return `Днів з високим розходом: ${count}`;
 }
 
 export type FuelStatusCounts = {

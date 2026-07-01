@@ -24,7 +24,7 @@ import { Badge } from "@/components/Badge";
 import { RangeFleetTable } from "@/components/fleet/RangeFleetTable";
 import { CoveragePanel } from "@/components/report/CoveragePanel";
 import { ReportRangeFilters } from "@/components/report/ReportRangeFilters";
-import { formatReportDaysLabel } from "@/analytics/fuel-consumption-status";
+import { formatReportDaysLabel, fuelStatusLabel } from "@/analytics/fuel-consumption-status";
 import { isImportActive } from "@/lib/report/coverage";
 import { useRangeReport } from "@/hooks/useRangeReport";
 import { isValidDateParam, resolveInitialRange } from "@/lib/report/dates";
@@ -328,11 +328,13 @@ function HomePageContent() {
                   <div className="chip-row">
                     <Badge tone="success">
                       <AlertTriangle size={13} />
-                      {data?.summary?.fuelStatusCounts?.normal ?? 0} нормальний розхід
+                      {data?.summary?.fuelStatusCounts?.normal ?? 0}{" "}
+                      {fuelStatusLabel("normal")}
                     </Badge>
                     <Badge tone="avrg">
                       <AlertTriangle size={13} />
-                      {data?.summary?.fuelStatusCounts?.avrg ?? 0} середній розхід
+                      {data?.summary?.fuelStatusCounts?.avrg ?? 0}{" "}
+                      {fuelStatusLabel("avrg")}
                     </Badge>
                     <Badge
                       tone={
@@ -342,7 +344,8 @@ function HomePageContent() {
                       }
                     >
                       <AlertTriangle size={13} />
-                      {data?.summary?.fuelStatusCounts?.high ?? 0} високий розхід
+                      {data?.summary?.fuelStatusCounts?.high ?? 0}{" "}
+                      {fuelStatusLabel("high")}
                     </Badge>
                   </div>
                 </article>
@@ -379,6 +382,10 @@ function HomePageContent() {
                   <SummaryDetailStat
                     label="Час руху"
                     value={formatDuration(data?.summary?.totalMovementSeconds ?? null)}
+                  />
+                  <SummaryDetailStat
+                    label="> 86 км/г"
+                    value={formatDuration(data?.summary?.totalOverSpeedLimitSeconds ?? null)}
                   />
                 </SummaryMetricCard>
                 <SummaryMetricCard

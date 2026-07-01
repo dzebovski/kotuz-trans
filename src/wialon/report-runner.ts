@@ -8,11 +8,16 @@ import {
 } from "./normalize-report";
 import type {
   ExecReportParams,
+  ReportInterval,
   WialonApplyReportResult,
+  WialonChartJson,
+  WialonReportAttachment,
   WialonReportStatus,
   WialonStatRow,
   WialonTableRow,
 } from "./types";
+import { findSpeedChartDataset } from "./parsers/speed-chart";
+import { WialonError } from "./errors";
 
 export type FetchRowsOptions = {
   pageSize?: number;
@@ -24,6 +29,8 @@ export type RunReportOptions = {
   pollIntervalMs?: number;
   reportTimeoutMs?: number;
   loadRows?: boolean;
+  fetchChartJson?: boolean;
+  chartRenderWidth?: number;
   rowSelectLevel?: number;
   selectRows?: (tableIndex: number, totalRows: number) => Promise<WialonTableRow[]>;
   resolveTableIndices?: (ctx: {
@@ -36,7 +43,126 @@ export type RunReportResult = {
   stats: WialonStatRow[];
   rows: WialonTableRow[];
   tables: NonNullable<WialonApplyReportResult["reportResult"]>["tables"];
+  chartJson: WialonChartJson | null;
+  chartFetchWarning?: string;
 };
+
+export function getChartAttachmentCount(
+  applied: WialonApplyReportResult,
+): number {
+  const attachments = applied.reportResult?.attachments;
+  if (typeof attachments === "number") {
+    return attachments > 0 ? attachments : 0;
+  }
+  if (Array.isArray(attachments)) {
+    return attachments.length;
+  }
+  return 0;
+}
+
+function attachmentHasSpeedDatasetMeta(
+  attachment: WialonReportAttachment,
+): boolean {
+  const name = attachment?.name?.toLowerCase() ?? "";
+  if (name.includes("скорост") || name.includes("speed")) {
+    return true;
+  }
+  return (attachment?.datasets ?? []).some((dataset) => {
+    const label = dataset.toLowerCase();
+    return label.includes("скорост") || label.includes("speed");
+  });
+}
+
+export function resolveChartAttachmentIndices(
+  applied: WialonApplyReportResult,
+): number[] {
+  const count = getChartAttachmentCount(applied);
+  if (count === 0) {
+    return [];
+  }
+
+  const attachments = applied.reportResult?.attachments;
+  if (Array.isArray(attachments)) {
+    const speedIndex = attachments.findIndex((attachment) =>
+      attachmentHasSpeedDatasetMeta(attachment),
+    );
+    if (speedIndex >= 0) {
+      return [
+        speedIndex,
+        ...Array.from({ length: count }, (_, index) => index).filter(
+          (index) => index !== speedIndex,
+        ),
+      ];
+    }
+
+    const chartIndex = attachments.findIndex(
+      (attachment) =>
+        attachment.type === "chart" ||
+        attachment.type === "graph" ||
+        attachment.name?.toLowerCase().includes("chart") ||
+        attachment.name?.toLowerCase().includes("граф"),
+    );
+    const preferred = chartIndex >= 0 ? chartIndex : 0;
+    return [
+      preferred,
+      ...Array.from({ length: count }, (_, index) => index).filter(
+        (index) => index !== preferred,
+      ),
+    ];
+  }
+
+  return Array.from({ length: count }, (_, index) => index);
+}
+
+export function resolveChartAttachmentIndex(
+  applied: WialonApplyReportResult,
+): number {
+  return resolveChartAttachmentIndices(applied)[0] ?? 0;
+}
+
+async function fetchReportChartJson(
+  client: WialonClient,
+  applied: WialonApplyReportResult,
+  width: number,
+  interval: ReportInterval,
+): Promise<{ chartJson: WialonChartJson | null; warning?: string }> {
+  const attachmentIndices = resolveChartAttachmentIndices(applied);
+  if (attachmentIndices.length === 0) {
+    return { chartJson: null, warning: "Fuel report has no chart attachments" };
+  }
+
+  let lastChartJson: WialonChartJson | null = null;
+  let fetchWarning: string | undefined;
+
+  for (const attachmentIndex of attachmentIndices) {
+    try {
+      const chartJson = await client.call<WialonChartJson>("report/render_json", {
+        attachmentIndex,
+        width: Math.max(1, Math.round(width)),
+        useCrop: 0,
+        cropBegin: interval.from,
+        cropEnd: interval.to,
+      });
+      lastChartJson = chartJson;
+      if (findSpeedChartDataset(chartJson)) {
+        return { chartJson };
+      }
+    } catch (error) {
+      const message =
+        error instanceof WialonError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "unknown error";
+      fetchWarning = `Fuel report chart fetch failed: ${message}`;
+    }
+  }
+
+  return {
+    chartJson: lastChartJson,
+    warning: fetchWarning ?? "Fuel report chart has no speed dataset",
+  };
+}
 
 export async function runWialonReport(
   params: ExecReportParams,
@@ -113,6 +239,19 @@ export async function runWialonReport(
     const stats = normalizeStatRows(applied.reportResult?.stats ?? []);
     const tables = applied.reportResult?.tables ?? [];
 
+    let chartJson: WialonChartJson | null = null;
+    let chartFetchWarning: string | undefined;
+    if (options.fetchChartJson) {
+      const chartResult = await fetchReportChartJson(
+        client,
+        applied,
+        options.chartRenderWidth ?? 1200,
+        params.interval,
+      );
+      chartJson = chartResult.chartJson;
+      chartFetchWarning = chartResult.warning;
+    }
+
     const rows: WialonTableRow[] = [];
     if (loadRows && tables.length > 0) {
       const tableIndices =
@@ -136,7 +275,7 @@ export async function runWialonReport(
       }
     }
 
-    return { stats, rows, tables };
+    return { stats, rows, tables, chartJson, chartFetchWarning };
   } finally {
     if (reportStarted) {
       try {

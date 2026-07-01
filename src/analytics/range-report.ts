@@ -1,8 +1,8 @@
 import {
   evaluateFuelConsumptionStatus,
   FUEL_STATUS_RANK,
+  isConsumptionEvaluable,
   type FuelConsumptionStatus,
-  worstFuelStatus,
 } from "@/analytics/fuel-consumption-status";
 
 export type RangeDailyTrip = {
@@ -13,12 +13,15 @@ export type RangeDailyTrip = {
   averageFuelConsumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number | null;
+  overSpeedLimitDurationSeconds: number | null;
   averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number | null;
   maxSpeedKmh: number | null;
   refillCount: number;
   refilledL: number;
+  drainCount: number;
+  drainedL: number;
   fuelStatus: FuelConsumptionStatus;
   routeKey: string | null;
   startCountryCode: string | null;
@@ -39,12 +42,15 @@ export type RangeVehicleAggregate = {
   consumptionLPer100Km: number | null;
   rolling1000KmConsumptionLPer100Km: number | null;
   movementDurationSeconds: number;
+  overSpeedLimitDurationSeconds: number;
   averageSpeedKmh: number | null;
   parkingCount: number;
   parkingDurationSeconds: number;
   maxSpeedKmh: number | null;
   refillCount: number;
   refilledL: number;
+  drainCount: number;
+  drainedL: number;
   fuelStatus: FuelConsumptionStatus | null;
   highDays: number;
   days: RangeDailyTrip[];
@@ -82,27 +88,41 @@ export function aggregateTripsByVehicle(
         (sum, day) => sum + (day.fuelConsumedL ?? 0),
         0,
       );
-      const fuelDays = days.filter((day) => day.fuelConsumedL != null);
+      const evaluableDays = days.filter((day) =>
+        isConsumptionEvaluable(day.mileageKm),
+      );
+      const evaluableMileageKm = evaluableDays.reduce(
+        (sum, day) => sum + day.mileageKm,
+        0,
+      );
+      const evaluableFuelConsumedL = evaluableDays.reduce(
+        (sum, day) => sum + (day.fuelConsumedL ?? 0),
+        0,
+      );
+      const evaluableFuelDays = evaluableDays.filter(
+        (day) => day.fuelConsumedL != null,
+      );
       const lastDay = days[days.length - 1];
       const movementDurationSeconds = days.reduce(
         (sum, day) => sum + (day.movementDurationSeconds ?? 0),
         0,
       );
+      const overSpeedLimitDurationSeconds = days.reduce(
+        (sum, day) => sum + (day.overSpeedLimitDurationSeconds ?? 0),
+        0,
+      );
       const consumptionLPer100Km =
-        mileageKm > 0 && fuelDays.length > 0
-          ? (fuelConsumedL / mileageKm) * 100
+        isConsumptionEvaluable(evaluableMileageKm) &&
+        evaluableFuelDays.length > 0
+          ? (evaluableFuelConsumedL / evaluableMileageKm) * 100
           : null;
-      const periodFuelStatus =
-        mileageKm > 0
+      const fuelStatus =
+        consumptionLPer100Km != null
           ? evaluateFuelConsumptionStatus(
               consumptionLPer100Km,
               lastDay.vehicle.consumptionTier,
             )
           : ("not_evaluated" as FuelConsumptionStatus);
-      const fuelStatus = worstFuelStatus([
-        ...days.map((day) => day.fuelStatus),
-        periodFuelStatus,
-      ]);
 
       return {
         vehicle: lastDay.vehicle,
@@ -112,6 +132,7 @@ export function aggregateTripsByVehicle(
         rolling1000KmConsumptionLPer100Km:
           lastDay.rolling1000KmConsumptionLPer100Km,
         movementDurationSeconds,
+        overSpeedLimitDurationSeconds,
         averageSpeedKmh:
           movementDurationSeconds > 0
             ? mileageKm / (movementDurationSeconds / 3600)
@@ -123,6 +144,8 @@ export function aggregateTripsByVehicle(
         ),
         refillCount: days.reduce((sum, day) => sum + day.refillCount, 0),
         refilledL: days.reduce((sum, day) => sum + day.refilledL, 0),
+        drainCount: days.reduce((sum, day) => sum + day.drainCount, 0),
+        drainedL: days.reduce((sum, day) => sum + day.drainedL, 0),
         maxSpeedKmh: days.reduce<number | null>(
           (maximum, day) =>
             day.maxSpeedKmh == null
@@ -131,7 +154,8 @@ export function aggregateTripsByVehicle(
           null,
         ),
         fuelStatus,
-        highDays: days.filter((day) => day.fuelStatus === "high").length,
+        highDays: evaluableDays.filter((day) => day.fuelStatus === "high")
+          .length,
         days,
       };
     })

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { vehicleImportNeedsPolling } from "@/lib/report/coverage";
+import { vehicleImportShouldPoll } from "@/lib/report/coverage";
 import {
   dateDaysAgo,
   getKyivDate,
@@ -38,14 +38,20 @@ export function useVehicleReport({
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [importActive, setImportActive] = useState(false);
+  const [forceAwaitingIdle, setForceAwaitingIdle] = useState(false);
+  const [ingestAfterDate, setIngestAfterDate] = useState<string | null>(null);
   const [rangeRunStatus, setRangeRunStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mutatingRef = useRef(false);
   const pollingRef = useRef(false);
+  const importActiveRef = useRef(false);
+  const prevMutatingRef = useRef(false);
   const importModeRef = useRef<"missing" | "force">("missing");
   const lastIngestedDateRef = useRef<string | null>(null);
+  const [pollingKick, setPollingKick] = useState(0);
 
   mutatingRef.current = mutating;
+  importActiveRef.current = importActive;
 
   useEffect(() => {
     setDraftFrom(initialFrom);
@@ -66,9 +72,6 @@ export function useVehicleReport({
         );
         const json = await readJsonResponse<VehicleReportResponse>(response);
         setData(json);
-        if (json.ready) {
-          setImportActive(false);
-        }
         return json;
       } catch (loadError) {
         if (!silent) {
@@ -112,8 +115,22 @@ export function useVehicleReport({
 
   const shouldPollCoverage = Boolean(
     data &&
-      vehicleImportNeedsPolling(data.coverage, data.ready, importActive || mutating),
+      vehicleImportShouldPoll({
+        coverage: data.coverage,
+        ready: data.ready,
+        importActive: importActive || mutating,
+        mode: importModeRef.current,
+        afterDate: ingestAfterDate,
+        forceAwaitingIdle,
+      }),
   );
+
+  useEffect(() => {
+    if (prevMutatingRef.current && !mutating && importActive) {
+      setPollingKick((kick) => kick + 1);
+    }
+    prevMutatingRef.current = mutating;
+  }, [mutating, importActive]);
 
   useEffect(() => {
     if (!shouldPollCoverage) {
@@ -133,17 +150,25 @@ export function useVehicleReport({
     };
 
     const tick = async (): Promise<void> => {
-      if (cancelled || mutatingRef.current || pollingRef.current) {
+      if (cancelled || pollingRef.current) {
+        return;
+      }
+
+      if (mutatingRef.current) {
+        scheduleNext();
         return;
       }
 
       pollingRef.current = true;
       try {
         const json = await load(true);
-        if (cancelled || !json || json.ready) {
-          if (json?.ready) {
-            setImportActive(false);
-          }
+        if (cancelled || !json) {
+          return;
+        }
+
+        const isForce = importModeRef.current === "force";
+        if (!isForce && json.ready) {
+          setImportActive(false);
           return;
         }
 
@@ -151,6 +176,7 @@ export function useVehicleReport({
         const result = await ingestNextDate();
         if (result.status === "blocked") {
           setImportActive(false);
+          setForceAwaitingIdle(false);
           setError(
             "Зараз на головній сторінці йде імпорт флоту за цю дату. Дочекайся завершення.",
           );
@@ -158,25 +184,27 @@ export function useVehicleReport({
         }
         if (result.status === "idle") {
           setImportActive(false);
+          setForceAwaitingIdle(false);
           setRangeRunStatus(null);
-          scheduleNext();
+          await load(true);
           return;
         }
         if (result.status === "failed") {
           setImportActive(false);
+          setForceAwaitingIdle(false);
           setError(ingestErrorMessage(result));
           return;
         }
         if (result.reportDate) {
           lastIngestedDateRef.current = result.reportDate;
+          setIngestAfterDate(result.reportDate);
           setRangeRunStatus(`Оброблено ${formatDate(result.reportDate)}…`);
         }
-        const refreshed = await load(true);
-        if (!cancelled && refreshed && !refreshed.ready) {
-          scheduleNext();
-        }
+        await load(true);
+        scheduleNext();
       } catch (kickError) {
         setImportActive(false);
+        setForceAwaitingIdle(false);
         setError(
           kickError instanceof Error
             ? kickError.message
@@ -197,14 +225,23 @@ export function useVehicleReport({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [shouldPollCoverage, ingestNextDate, load]);
+  }, [shouldPollCoverage, ingestNextDate, load, pollingKick]);
+
+  function resetImportProgress(): void {
+    lastIngestedDateRef.current = null;
+    setIngestAfterDate(null);
+    setForceAwaitingIdle(false);
+  }
 
   function applyRange(): void {
+    if (draftFrom === from && draftTo === to) {
+      return;
+    }
     setError(null);
     setData(null);
     setRangeRunStatus(null);
     setImportActive(false);
-    lastIngestedDateRef.current = null;
+    resetImportProgress();
     setFrom(draftFrom);
     setTo(draftTo);
     onRangeApplied?.(draftFrom, draftTo);
@@ -213,6 +250,9 @@ export function useVehicleReport({
   function applyPreset(days: 1 | 7 | 30 | 90): void {
     const end = getKyivDate(-1);
     const start = dateDaysAgo(days - 1, end);
+    if (start === from && end === to) {
+      return;
+    }
     setDraftFrom(start);
     setDraftTo(end);
     setFrom(start);
@@ -220,7 +260,7 @@ export function useVehicleReport({
     setData(null);
     setRangeRunStatus(null);
     setImportActive(false);
-    lastIngestedDateRef.current = null;
+    resetImportProgress();
     onRangeApplied?.(start, end);
   }
 
@@ -232,7 +272,10 @@ export function useVehicleReport({
     setError(null);
     setImportActive(true);
     importModeRef.current = mode;
-    lastIngestedDateRef.current = null;
+    resetImportProgress();
+    if (mode === "force") {
+      setForceAwaitingIdle(true);
+    }
     setRangeRunStatus(
       mode === "force"
         ? "Перезавантажую дані для машини…"
@@ -245,6 +288,7 @@ export function useVehicleReport({
       const result = await ingestNextDate();
       if (result.status === "blocked") {
         setImportActive(false);
+        setForceAwaitingIdle(false);
         setError(
           "Зараз на головній сторінці йде імпорт флоту. Дочекайся завершення.",
         );
@@ -252,19 +296,23 @@ export function useVehicleReport({
       }
       if (result.status === "idle") {
         setImportActive(false);
+        setForceAwaitingIdle(false);
       }
       if (result.status === "failed") {
         setImportActive(false);
+        setForceAwaitingIdle(false);
         setError(ingestErrorMessage(result));
         return;
       }
       if (result.reportDate) {
         lastIngestedDateRef.current = result.reportDate;
+        setIngestAfterDate(result.reportDate);
         setRangeRunStatus(`Стартовано ${formatDate(result.reportDate)}.`);
       }
       await load(true);
     } catch (runError) {
       setImportActive(false);
+      setForceAwaitingIdle(false);
       setError(
         runError instanceof Error
           ? runError.message
@@ -272,7 +320,9 @@ export function useVehicleReport({
       );
     } finally {
       setMutating(false);
-      setRangeRunStatus(null);
+      if (!importActiveRef.current) {
+        setRangeRunStatus(null);
+      }
       await load(true);
     }
   }

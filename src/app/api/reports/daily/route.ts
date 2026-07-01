@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const SPEED_LIMIT_KMH = 86;
+import { SPEED_LIMIT_KMH } from "@/analytics/over-speed-duration";
 const INGESTION_PHASES = new Set<IngestionPhase>([
   "starting",
   "processing",
@@ -122,6 +122,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         (sum, trip) => sum + (trip.movement_duration_seconds ?? 0),
         0,
       ),
+      totalOverSpeedLimitSeconds: trips.reduce(
+        (sum, trip) => sum + (trip.over_speed_limit_duration_seconds ?? 0),
+        0,
+      ),
       totalParkingCount: trips.reduce(
         (sum, trip) => sum + trip.parking_count_from_trips,
         0,
@@ -145,6 +149,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const tripsWithPauses = trips.map((trip) => ({
       ...trip,
       speedLimitExceeded: (trip.max_speed_kmh ?? 0) > SPEED_LIMIT_KMH,
+      overSpeedLimitDurationSeconds: trip.over_speed_limit_duration_seconds,
       derivedPauses: inferPausesBetweenSegments(trip.segments),
     }));
     const successfulVehicles = ingestionRun?.successful_vehicles ?? 0;

@@ -75,3 +75,66 @@ export function getRollingReportDateRange(
   const from = formatReportDate(toDate.minus({ days: days - 1 }));
   return { from, to };
 }
+
+export function getBusinessDateRangeInterval(
+  from: string,
+  to: string,
+  timezone: string,
+): Pick<BusinessDayInterval, "fromUnix" | "toUnix"> {
+  const start = DateTime.fromISO(from, { zone: timezone }).startOf("day");
+  const end = DateTime.fromISO(to, { zone: timezone }).endOf("day");
+  if (!start.isValid) {
+    throw new Error(`Invalid report date: ${from}`);
+  }
+  if (!end.isValid) {
+    throw new Error(`Invalid report date: ${to}`);
+  }
+  if (start > end) {
+    throw new Error(`Invalid date range: ${from} is after ${to}`);
+  }
+  return {
+    fromUnix: Math.floor(start.toSeconds()),
+    toUnix: Math.floor(end.toSeconds()),
+  };
+}
+
+export function wialonLocalTimeToIso(
+  value: string | null,
+  timezone: string,
+  fallbackReportDate: string,
+): string {
+  if (!value) {
+    return DateTime.fromISO(fallbackReportDate, { zone: timezone })
+      .startOf("day")
+      .toUTC()
+      .toISO()!;
+  }
+  const parsed = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm:ss", {
+    zone: timezone,
+  });
+  if (parsed.isValid) {
+    return parsed.toUTC().toISO()!;
+  }
+  const iso = DateTime.fromISO(value, { zone: timezone });
+  if (iso.isValid) {
+    return iso.toUTC().toISO()!;
+  }
+  return DateTime.fromISO(fallbackReportDate, { zone: timezone })
+    .startOf("day")
+    .toUTC()
+    .toISO()!;
+}
+
+export function reportDateFromWialonLocalTime(
+  value: string,
+  timezone: string,
+): string | null {
+  const parsed = DateTime.fromFormat(value, "yyyy-MM-dd HH:mm:ss", {
+    zone: timezone,
+  });
+  if (parsed.isValid) {
+    return parsed.toISODate();
+  }
+  const iso = DateTime.fromISO(value, { zone: timezone });
+  return iso.isValid ? iso.toISODate() : null;
+}

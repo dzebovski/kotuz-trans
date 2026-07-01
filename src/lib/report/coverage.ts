@@ -79,6 +79,69 @@ export function vehicleImportNeedsPolling(
   return importActive;
 }
 
+export function vehicleForceImportHasRemainingDates(input: {
+  coverage: CoverageDay[];
+  afterDate: string | null;
+}): boolean {
+  const dates = input.coverage.map((day) => day.date);
+  const coverageByDate = new Map(
+    input.coverage.map((day) => [
+      day.date,
+      {
+        ready: day.ready,
+        state: day.state,
+        fleetRunning: day.state === "running",
+      },
+    ]),
+  );
+
+  const startIndex =
+    input.afterDate != null
+      ? Math.max(0, dates.indexOf(input.afterDate) + 1)
+      : 0;
+
+  for (let index = startIndex; index < dates.length; index += 1) {
+    const date = dates[index]!;
+    const day = coverageByDate.get(date);
+    if (!day) {
+      continue;
+    }
+    if (day.fleetRunning) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+export function vehicleImportShouldPoll(input: {
+  coverage: CoverageDay[];
+  ready: boolean;
+  importActive: boolean;
+  mode: "missing" | "force";
+  afterDate: string | null;
+  forceAwaitingIdle: boolean;
+}): boolean {
+  if (!input.importActive) {
+    return false;
+  }
+  if (input.mode === "force") {
+    return (
+      input.forceAwaitingIdle ||
+      vehicleForceImportHasRemainingDates({
+        coverage: input.coverage,
+        afterDate: input.afterDate,
+      })
+    );
+  }
+  return vehicleImportNeedsPolling(
+    input.coverage,
+    input.ready,
+    input.importActive,
+  );
+}
+
 export function fleetKickShouldRun(coverage: CoverageDay[]): boolean {
   return hasClaimableQueuedDates(coverage);
 }

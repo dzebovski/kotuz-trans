@@ -12,36 +12,36 @@ type BadgeDoc = {
 
 const badgeDocs: BadgeDoc[] = [
   {
-    badge: "{N} нормальний розхід",
-    shows: "Кількість авто з нормальним розходом палива за період",
+    badge: "{N} чудовий розхід",
+    shows: "Кількість авто з чудовим розходом палива за період",
     location: "Fleet summary (chip-row)",
-    calculation: "fuelStatusCounts.normal: авто з worst fuelStatus = normal",
+    calculation: "fuelStatusCounts.normal: авто з period fuelStatus = normal",
     design: "AlertTriangle + success",
   },
   {
-    badge: "{N} середній розхід",
-    shows: "Кількість авто з середнім розходом палива за період",
+    badge: "{N} нормальний розхід",
+    shows: "Кількість авто з нормальним розходом палива за період",
     location: "Fleet summary (chip-row)",
-    calculation: "fuelStatusCounts.avrg: авто з worst fuelStatus = avrg",
+    calculation: "fuelStatusCounts.avrg: авто з period fuelStatus = avrg",
     design: "AlertTriangle + avrg",
   },
   {
     badge: "{N} високий розхід",
     shows: "Кількість авто з високим розходом палива за період",
     location: "Fleet summary (chip-row)",
-    calculation: "fuelStatusCounts.high: авто з worst fuelStatus = high",
+    calculation: "fuelStatusCounts.high: авто з period fuelStatus = high",
     design: "AlertTriangle + danger якщо N > 0, інакше success",
   },
   {
     badge: "{fuelStatusLabel}",
-    shows: "Найгірший статус розходу за період (нормальний / середній / високий)",
+    shows: "Статус розходу за період (чудовий / нормальний / високий)",
     location: "Картка авто (vehicle-statuses)",
     calculation:
-      "worstFuelStatus по днях; tier 30: normal ≤27, avrg 27–30, high >30; tier 32: normal ≤29, avrg 29–32, high >32",
-    design: "normal → success, avrg → #D5ED38, high → danger; не показувати якщо всі дні not_evaluated",
+      "evaluateFuelConsumptionStatus(period avg, consumption_tier); tier 30: normal ≤27, avrg 27–30, high >30; tier 32: normal ≤29, avrg 29–32, high >32",
+    design: "normal → success, avrg → #D5ED38, high → danger; не показувати якщо not_evaluated",
   },
   {
-    badge: "{N} днів high",
+    badge: "Днів з високим розходом: {N}",
     shows: "Кількість днів з високим розходом",
     location: "Картка авто (лише якщо N > 0)",
     calculation: "highDays = дні з fuelStatus = high",
@@ -159,11 +159,11 @@ export default function DesignPage() {
                 <div className="chip-row">
                   <Badge tone="success">
                     <AlertTriangle size={13} />
-                    35 нормальний розхід
+                    35 чудовий розхід
                   </Badge>
                   <Badge tone="avrg">
                     <AlertTriangle size={13} />
-                    4 середній розхід
+                    4 нормальний розхід
                   </Badge>
                   <Badge tone="danger">
                     <AlertTriangle size={13} />
@@ -177,11 +177,11 @@ export default function DesignPage() {
               <div className="chip-row">
                 <Badge tone="success">
                   <AlertTriangle size={13} />
-                  24 нормальний розхід
+                  24 чудовий розхід
                 </Badge>
                 <Badge tone="avrg">
                   <AlertTriangle size={13} />
-                  0 середній розхід
+                  0 нормальний розхід
                 </Badge>
                 <Badge tone="success">
                   <AlertTriangle size={13} />
@@ -203,7 +203,7 @@ export default function DesignPage() {
               <div className="chip-row vehicle-statuses">
                 <Badge tone="success">
                   <AlertTriangle size={13} />
-                  нормальний розхід
+                  чудовий розхід
                 </Badge>
                 <Badge>
                   <Clock3 size={13} />
@@ -212,7 +212,7 @@ export default function DesignPage() {
               </div>
             </div>
             <div className="design-preview__alt">
-              <p className="muted">Середній і високий розхід:</p>
+              <p className="muted">Нормальний і високий розхід:</p>
               <div className="vehicle-card vehicle-card--design">
                 <div className="vehicle-card__header">
                   <span className="mono muted">unit 2715</span>
@@ -221,11 +221,11 @@ export default function DesignPage() {
                 <div className="chip-row vehicle-statuses">
                   <Badge tone="avrg">
                     <AlertTriangle size={13} />
-                    середній розхід
+                    нормальний розхід
                   </Badge>
                   <Badge tone="danger">
                     <AlertTriangle size={13} />
-                    2 днів high
+                    Днів з високим розходом: 2
                   </Badge>
                   <Badge>
                     <Clock3 size={13} />
@@ -249,8 +249,8 @@ export default function DesignPage() {
               <Badge tone="success">готово</Badge>
               <Badge tone="danger">помилка</Badge>
               <Badge tone="warning">завантаження</Badge>
-              <Badge tone="success">нормальний розхід</Badge>
-              <Badge tone="avrg">середній розхід</Badge>
+              <Badge tone="success">чудовий розхід</Badge>
+              <Badge tone="avrg">нормальний розхід</Badge>
               <Badge tone="danger">високий розхід</Badge>
               <Badge>local</Badge>
             </div>

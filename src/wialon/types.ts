@@ -19,6 +19,28 @@ export type WialonTableRow = {
   c?: WialonStatCell[];
 };
 
+export type WialonReportAttachment = {
+  name?: string;
+  type?: string;
+  datasets?: string[];
+};
+
+export type WialonChartDataset = {
+  name?: string;
+  color?: number;
+  units_x?: string;
+  units?: string | null;
+  y_axis?: number;
+  data?: {
+    x?: number[];
+    y?: number[];
+  };
+};
+
+export type WialonChartJson = {
+  datasets?: Record<string, WialonChartDataset>;
+};
+
 export type WialonApplyReportResult = {
   reportResult?: {
     stats?: WialonStatRow[];
@@ -29,6 +51,7 @@ export type WialonApplyReportResult = {
       level?: number;
       columns?: number;
     }>;
+    attachments?: WialonReportAttachment[] | number;
   };
 };
 

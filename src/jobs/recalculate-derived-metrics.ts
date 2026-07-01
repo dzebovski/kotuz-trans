@@ -1,4 +1,7 @@
-import { evaluateFuelConsumptionStatus } from "@/analytics/fuel-consumption-status";
+import {
+  evaluateFuelConsumptionStatus,
+  isConsumptionEvaluable,
+} from "@/analytics/fuel-consumption-status";
 import { calculateRolling1000KmConsumption } from "@/analytics/rolling-fuel";
 import {
   getTripSegmentsForVehicleThrough,
@@ -22,10 +25,13 @@ export async function recalculateVehicleDerivedMetricsAfterDate(input: {
       vehicleId: input.vehicleId,
       throughEndedAt: trip.intervalEnd,
     });
-    const fuelStatus = evaluateFuelConsumptionStatus(
-      trip.averageFuelConsumptionLPer100Km,
-      vehicle?.consumption_tier ?? null,
-    );
+    const fuelStatus =
+      !isConsumptionEvaluable(trip.mileageKm)
+        ? "not_evaluated"
+        : evaluateFuelConsumptionStatus(
+            trip.averageFuelConsumptionLPer100Km,
+            vehicle?.consumption_tier ?? null,
+          );
     const rolling = calculateRolling1000KmConsumption(segments);
 
     await updateDailyTripDerivedMetrics({

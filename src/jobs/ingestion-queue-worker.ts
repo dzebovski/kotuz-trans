@@ -16,6 +16,7 @@ import {
 import { listIngestionRunsForRange } from "@/db/ingestion-runs-repository";
 import { DAILY_FLEET_REPORT_JOB_NAME } from "@/jobs/job-names";
 import { runDailyFleetReport } from "@/jobs/run-daily-fleet-report";
+import type { EnsureSkipReason, EnsureSkippedDate } from "@/lib/report/types";
 import { log } from "@/utils/logger";
 
 export type EnqueueMissingDatesInput = {
@@ -38,7 +39,7 @@ export type ProcessQueueItemResult = {
 
 export async function enqueueMissingDatesForRange(
   input: EnqueueMissingDatesInput,
-): Promise<{ queued: string[]; skipped: string[] }> {
+): Promise<{ queued: string[]; skipped: EnsureSkippedDate[] }> {
   const [runs, queue] = await Promise.all([
     listIngestionRunsForRange(
       DAILY_FLEET_REPORT_JOB_NAME,
@@ -54,12 +55,27 @@ export async function enqueueMissingDatesForRange(
   const runByDate = new Map(runs.map((run) => [run.report_date, run]));
   const queueByDate = new Map(queue.map((item) => [item.report_date, item]));
   const queued: string[] = [];
-  const skipped: string[] = [];
+  const skipped: EnsureSkippedDate[] = [];
 
   for (const date of input.dates) {
     const isToday = date === input.today;
     const run = runByDate.get(date);
     const queueItem = queueByDate.get(date);
+
+    const skipDate = async (reason: EnsureSkipReason): Promise<void> => {
+      skipped.push({ date, reason });
+      await logIngestionEvent({
+        jobName: DAILY_FLEET_REPORT_JOB_NAME,
+        reportDate: date,
+        scope: "queue",
+        eventType: "skipped",
+        message: reason,
+        attempt:
+          reason === "queue_failed_needs_retry"
+            ? queueItem?.attempts
+            : undefined,
+      });
+    };
 
     if (
       input.mode === "missing" &&
@@ -67,14 +83,7 @@ export async function enqueueMissingDatesForRange(
       run?.status === "completed" &&
       run.is_final
     ) {
-      skipped.push(date);
-      await logIngestionEvent({
-        jobName: DAILY_FLEET_REPORT_JOB_NAME,
-        reportDate: date,
-        scope: "queue",
-        eventType: "skipped",
-        message: "already_final",
-      });
+      await skipDate("already_final");
       continue;
     }
     if (
@@ -83,14 +92,7 @@ export async function enqueueMissingDatesForRange(
         queueItem?.status === "running" ||
         queueItem?.status === "pending")
     ) {
-      skipped.push(date);
-      await logIngestionEvent({
-        jobName: DAILY_FLEET_REPORT_JOB_NAME,
-        reportDate: date,
-        scope: "queue",
-        eventType: "skipped",
-        message: "already_queued_or_running",
-      });
+      await skipDate("already_queued_or_running");
       continue;
     }
     if (
@@ -98,15 +100,7 @@ export async function enqueueMissingDatesForRange(
       queueItem?.status === "failed" &&
       input.retryFailed !== true
     ) {
-      skipped.push(date);
-      await logIngestionEvent({
-        jobName: DAILY_FLEET_REPORT_JOB_NAME,
-        reportDate: date,
-        scope: "queue",
-        eventType: "skipped",
-        message: "queue_failed_needs_retry",
-        attempt: queueItem.attempts,
-      });
+      await skipDate("queue_failed_needs_retry");
       continue;
     }
 

@@ -1,4 +1,5 @@
 import { BUSINESS_TIMEZONE } from "@/lib/report/dates";
+import type { EnsureRangeResponse, EnsureSkipReason } from "@/lib/report/types";
 
 export function formatNum(value: number | null, suffix = ""): string {
   if (value == null || Number.isNaN(value)) {
@@ -31,6 +32,29 @@ export function formatTime(iso: string): string {
   });
 }
 
+export function formatCoordinates(
+  latitude: number,
+  longitude: number,
+): string {
+  const latHemisphere = latitude >= 0 ? "N" : "S";
+  const lonHemisphere = longitude >= 0 ? "E" : "W";
+  return `${Math.abs(latitude).toFixed(6)}° ${latHemisphere}, ${Math.abs(longitude).toFixed(6)}° ${lonHemisphere}`;
+}
+
+export function formatFuelEventLocation(
+  address: string | null,
+  latitude: number | null,
+  longitude: number | null,
+): string {
+  if (address?.trim()) {
+    return address.trim();
+  }
+  if (latitude != null && longitude != null) {
+    return formatCoordinates(latitude, longitude);
+  }
+  return "—";
+}
+
 export function coverageLabel(
   state:
     | "ready"
@@ -51,6 +75,40 @@ export function coverageLabel(
     failed: "помилка",
   } as const;
   return labels[state];
+}
+
+export function buildEnsureRunStatusMessage(
+  result: Pick<EnsureRangeResponse, "queued" | "skipped">,
+): string {
+  if (result.queued.length > 0) {
+    return `У черзі ${result.queued.length} дат. Запускаю обробку…`;
+  }
+  if (result.skipped.length === 0) {
+    return "Черга вже заповнена. Продовжую обробку…";
+  }
+  if (result.skipped.every((item) => item.reason === "already_final")) {
+    return "Дані вже завантажені. Оновлюю звіт…";
+  }
+  if (
+    result.skipped.every((item) => item.reason === "already_queued_or_running")
+  ) {
+    return "Дати вже в черзі або обробляються. Оновлюю статус…";
+  }
+  if (
+    result.skipped.every((item) => item.reason === "queue_failed_needs_retry")
+  ) {
+    return "Є дати з помилкою. Спробуйте «Довантажити дані» або повтор…";
+  }
+  return "Нові дати не додано. Оновлюю звіт…";
+}
+
+export function ensureSkipReasonLabel(reason: EnsureSkipReason): string {
+  const labels: Record<EnsureSkipReason, string> = {
+    already_final: "дані вже завантажені",
+    already_queued_or_running: "вже в черзі або обробляється",
+    queue_failed_needs_retry: "потрібен повтор після помилки",
+  };
+  return labels[reason];
 }
 
 export async function readJsonResponse<T>(response: Response): Promise<T> {

@@ -19,6 +19,13 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/Badge";
 import {
+  evaluateFuelConsumptionStatus,
+  fuelStatusLabel,
+  getSegmentFuelConsumptionClass,
+  isConsumptionEvaluable,
+  type ConsumptionTier,
+} from "@/analytics/fuel-consumption-status";
+import {
   getHeaderAriaSort,
   SortableHeaderButton,
 } from "@/components/table/SortableHeaderButton";
@@ -29,6 +36,7 @@ import { buildVehicleSegmentsSummary } from "@/lib/report/vehicle-segments-summa
 
 type VehicleSegmentsTableProps = {
   segments: VehicleTripSegment[];
+  consumptionTier: ConsumptionTier | null;
 };
 
 type VehicleSegmentsReportProps = VehicleSegmentsTableProps & {
@@ -101,7 +109,10 @@ function VehicleSegmentsHeaderCell({
   );
 }
 
-export function VehicleSegmentsTable({ segments }: VehicleSegmentsTableProps) {
+export function VehicleSegmentsTable({
+  segments,
+  consumptionTier,
+}: VehicleSegmentsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "startedAt", desc: false },
   ]);
@@ -130,6 +141,23 @@ export function VehicleSegmentsTable({ segments }: VehicleSegmentsTableProps) {
         <tbody>
           {table.getRowModel().rows.map((row) => {
             const segment = row.original;
+            const segmentConsumptionEvaluable = isConsumptionEvaluable(
+              segment.mileageKm,
+            );
+            const displayConsumptionLPer100Km = segmentConsumptionEvaluable
+              ? segment.averageFuelConsumptionLPer100Km
+              : null;
+            const consumptionStatus = evaluateFuelConsumptionStatus(
+              displayConsumptionLPer100Km,
+              consumptionTier,
+              segment.mileageKm,
+            );
+            const consumptionClass = getSegmentFuelConsumptionClass(
+              displayConsumptionLPer100Km,
+              consumptionTier,
+              segment.mileageKm,
+            );
+            const consumptionTitle = fuelStatusLabel(consumptionStatus);
             return (
               <tr key={row.id}>
                 <td className="mono">{formatTime(segment.startedAt)}</td>
@@ -141,8 +169,11 @@ export function VehicleSegmentsTable({ segments }: VehicleSegmentsTableProps) {
                 <td>{formatAddress(segment.endAddress)}</td>
                 <td className="mono">{formatNum(segment.mileageKm, " km")}</td>
                 <td className="mono">{formatNum(segment.fuelConsumedL, " l")}</td>
-                <td className="mono">
-                  {formatNum(segment.averageFuelConsumptionLPer100Km, " l/100")}
+                <td
+                  className={["mono", consumptionClass].filter(Boolean).join(" ")}
+                  title={consumptionTitle ?? undefined}
+                >
+                  {formatNum(displayConsumptionLPer100Km, " l/100")}
                 </td>
                 <td className="mono">
                   {formatNum(segment.averageSpeedKmh, " km/h")}
@@ -160,6 +191,7 @@ export function VehicleSegmentsTable({ segments }: VehicleSegmentsTableProps) {
 
 export function VehicleSegmentsReport({
   segments,
+  consumptionTier,
   mileageKm,
   fuelConsumedL,
   movementDurationSeconds,
@@ -248,7 +280,10 @@ export function VehicleSegmentsReport({
 
       {isExpanded ? (
         <div className="vehicle-segments-report__details" id={detailsId}>
-          <VehicleSegmentsTable segments={segments} />
+          <VehicleSegmentsTable
+            segments={segments}
+            consumptionTier={consumptionTier}
+          />
         </div>
       ) : null}
     </div>

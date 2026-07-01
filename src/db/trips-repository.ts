@@ -1,6 +1,7 @@
 import type { BaselineHistoryRow } from "@/analytics/baseline";
 import type { RangeDailyTrip } from "@/analytics/range-report";
-import type { VehicleFuelRefill, VehicleTripSegment } from "@/lib/report/types";
+import type { VehicleFuelDrain, VehicleFuelRefill, VehicleTripSegment } from "@/lib/report/types";
+import { DateTime } from "luxon";
 import { getSupabaseAdmin } from "./supabase-admin";
 
 export type DailyTripUpsert = {
@@ -40,6 +41,7 @@ export type DailyTripUpsert = {
   anomaly_status: string;
   is_anomaly: boolean;
   movement_duration_seconds: number | null;
+  over_speed_limit_duration_seconds: number | null;
   stop_count: number;
   parking_duration_seconds: number | null;
   parking_count_from_trips: number;
@@ -302,6 +304,7 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
     start_address: string | null;
     end_address: string | null;
     movement_duration_seconds: number | null;
+    over_speed_limit_duration_seconds: number | null;
     stop_count: number;
     parking_duration_seconds: number | null;
     parking_count_from_trips: number;
@@ -350,6 +353,7 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
       start_address,
       end_address,
       movement_duration_seconds,
+      over_speed_limit_duration_seconds,
       stop_count,
       parking_duration_seconds,
       parking_count_from_trips,
@@ -438,6 +442,8 @@ export async function listDailyTripsForReportDate(reportDate: string): Promise<
       end_address: (row.end_address as string | null) ?? null,
       movement_duration_seconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      over_speed_limit_duration_seconds:
+        (row.over_speed_limit_duration_seconds as number | null) ?? null,
       stop_count: Number(row.stop_count ?? 0),
       parking_duration_seconds:
         (row.parking_duration_seconds as number | null) ?? null,
@@ -474,12 +480,15 @@ export async function listDailyTripsForDates(
       average_fuel_consumption_l_per_100km,
       rolling_1000km_consumption_l_per_100km,
       movement_duration_seconds,
+      over_speed_limit_duration_seconds,
       average_speed_kmh,
       parking_count_from_trips,
       parking_duration_seconds,
       max_speed_kmh,
       refill_count,
       refilled_l,
+      drain_count,
+      drained_l,
       anomaly_status,
       route_key,
       start_country_code,
@@ -524,6 +533,8 @@ export async function listDailyTripsForDates(
           : Number(row.rolling_1000km_consumption_l_per_100km),
       movementDurationSeconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      overSpeedLimitDurationSeconds:
+        (row.over_speed_limit_duration_seconds as number | null) ?? null,
       averageSpeedKmh:
         row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
       parkingCount: Number(row.parking_count_from_trips ?? 0),
@@ -533,6 +544,8 @@ export async function listDailyTripsForDates(
         row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
       refillCount: Number(row.refill_count ?? 0),
       refilledL: Number(row.refilled_l ?? 0),
+      drainCount: Number(row.drain_count ?? 0),
+      drainedL: Number(row.drained_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
       startCountryCode: (row.start_country_code as string | null) ?? null,
@@ -564,12 +577,15 @@ export async function listDailyTripsForVehicleInRange(
       average_fuel_consumption_l_per_100km,
       rolling_1000km_consumption_l_per_100km,
       movement_duration_seconds,
+      over_speed_limit_duration_seconds,
       average_speed_kmh,
       parking_count_from_trips,
       parking_duration_seconds,
       max_speed_kmh,
       refill_count,
       refilled_l,
+      drain_count,
+      drained_l,
       anomaly_status,
       route_key,
       start_country_code,
@@ -616,6 +632,8 @@ export async function listDailyTripsForVehicleInRange(
           : Number(row.rolling_1000km_consumption_l_per_100km),
       movementDurationSeconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      overSpeedLimitDurationSeconds:
+        (row.over_speed_limit_duration_seconds as number | null) ?? null,
       averageSpeedKmh:
         row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
       parkingCount: Number(row.parking_count_from_trips ?? 0),
@@ -625,6 +643,8 @@ export async function listDailyTripsForVehicleInRange(
         row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
       refillCount: Number(row.refill_count ?? 0),
       refilledL: Number(row.refilled_l ?? 0),
+      drainCount: Number(row.drain_count ?? 0),
+      drainedL: Number(row.drained_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
       startCountryCode: (row.start_country_code as string | null) ?? null,
@@ -674,12 +694,15 @@ export async function listDailyTripsForRange(
       average_fuel_consumption_l_per_100km,
       rolling_1000km_consumption_l_per_100km,
       movement_duration_seconds,
+      over_speed_limit_duration_seconds,
       average_speed_kmh,
       parking_count_from_trips,
       parking_duration_seconds,
       max_speed_kmh,
       refill_count,
       refilled_l,
+      drain_count,
+      drained_l,
       anomaly_status,
       route_key,
       start_country_code,
@@ -725,6 +748,8 @@ export async function listDailyTripsForRange(
           : Number(row.rolling_1000km_consumption_l_per_100km),
       movementDurationSeconds:
         (row.movement_duration_seconds as number | null) ?? null,
+      overSpeedLimitDurationSeconds:
+        (row.over_speed_limit_duration_seconds as number | null) ?? null,
       averageSpeedKmh:
         row.average_speed_kmh == null ? null : Number(row.average_speed_kmh),
       parkingCount: Number(row.parking_count_from_trips ?? 0),
@@ -734,6 +759,8 @@ export async function listDailyTripsForRange(
         row.max_speed_kmh == null ? null : Number(row.max_speed_kmh),
       refillCount: Number(row.refill_count ?? 0),
       refilledL: Number(row.refilled_l ?? 0),
+      drainCount: Number(row.drain_count ?? 0),
+      drainedL: Number(row.drained_l ?? 0),
       fuelStatus: row.anomaly_status as RangeDailyTrip["fuelStatus"],
       routeKey: (row.route_key as string | null) ?? null,
       startCountryCode: (row.start_country_code as string | null) ?? null,
@@ -933,6 +960,64 @@ export async function listFuelRefillsForVehicleRange(input: {
   });
 }
 
+export async function listFuelDrainsForVehicleRange(input: {
+  vehicleId: string;
+  from: string;
+  to: string;
+}): Promise<VehicleFuelDrain[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("fuel_events")
+    .select(
+      `
+      id,
+      daily_trip_id,
+      event_time,
+      volume_l,
+      latitude,
+      longitude,
+      address,
+      daily_trips!inner (
+        id,
+        report_date,
+        vehicle_id
+      )
+    `,
+    )
+    .eq("vehicle_id", input.vehicleId)
+    .eq("event_type", "drain")
+    .eq("daily_trips.vehicle_id", input.vehicleId)
+    .gte("daily_trips.report_date", input.from)
+    .lte("daily_trips.report_date", input.to)
+    .order("event_time");
+
+  if (error) {
+    throw new Error(`Failed to load vehicle fuel drains: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const dailyTrip = firstRelation(
+      row.daily_trips as
+        | { id: string; report_date: string; vehicle_id: string }
+        | Array<{ id: string; report_date: string; vehicle_id: string }>
+        | null,
+    );
+    if (!dailyTrip) {
+      throw new Error("Fuel drain is missing daily trip relation");
+    }
+
+    return {
+      id: row.id as string,
+      dailyTripId: row.daily_trip_id as string,
+      reportDate: dailyTrip.report_date,
+      eventTime: row.event_time as string,
+      volumeL: Number(row.volume_l),
+      latitude: row.latitude == null ? null : Number(row.latitude),
+      longitude: row.longitude == null ? null : Number(row.longitude),
+      address: (row.address as string | null) ?? null,
+    };
+  });
+}
+
 export async function upsertDailyTripWithSegments(input: {
   dailyTrip: DailyTripUpsert;
   segments: TripSegmentUpsert[];
@@ -1034,4 +1119,129 @@ export async function upsertDailyTripWithSegments(input: {
   }
 
   return dailyTripId;
+}
+
+export async function upsertFuelDrainsForVehicleRange(input: {
+  vehicleId: string;
+  from: string;
+  to: string;
+  timezone: string;
+  events: FuelEventUpsert[];
+}): Promise<{ upserted: number; warnings: string[] }> {
+  const supabase = getSupabaseAdmin();
+  const warnings: string[] = [];
+
+  const { data: trips, error: tripsError } = await supabase
+    .from("daily_trips")
+    .select("id")
+    .eq("vehicle_id", input.vehicleId)
+    .gte("report_date", input.from)
+    .lte("report_date", input.to);
+
+  if (tripsError) {
+    throw new Error(`Failed to load daily trips for range drains: ${tripsError.message}`);
+  }
+
+  const dailyTripIds = (trips ?? []).map((trip) => trip.id as string);
+  if (dailyTripIds.length > 0) {
+    const { error: clearError } = await supabase
+      .from("fuel_events")
+      .delete()
+      .eq("event_type", "drain")
+      .in("daily_trip_id", dailyTripIds);
+    if (clearError) {
+      throw new Error(`Failed to clear range fuel drains: ${clearError.message}`);
+    }
+  }
+
+  const dedupedByNaturalKey = new Map<string, FuelEventUpsert & { daily_trip_id: string }>();
+
+  for (const event of input.events) {
+    const reportDate = DateTime.fromISO(event.event_time, { zone: "utc" })
+      .setZone(input.timezone)
+      .toISODate();
+    if (!reportDate || reportDate < input.from || reportDate > input.to) {
+      warnings.push(`Drain event ${event.event_time} is outside ${input.from}-${input.to}`);
+      continue;
+    }
+
+    const trip = await getDailyTripForVehicleDate(input.vehicleId, reportDate);
+    if (!trip) {
+      warnings.push(`No daily trip for drain on ${reportDate}`);
+      continue;
+    }
+
+    const key = `${event.vehicle_id}|${event.event_type}|${event.event_time}|${event.volume_l}`;
+    dedupedByNaturalKey.set(key, {
+      ...event,
+      daily_trip_id: trip.id,
+    });
+  }
+
+  const rows = Array.from(dedupedByNaturalKey.values());
+  if (rows.length > 0) {
+    const { error } = await supabase.from("fuel_events").upsert(rows, {
+      onConflict: "vehicle_id,event_type,event_time,volume_l",
+    });
+    if (error) {
+      throw new Error(`Failed to upsert range fuel drains: ${error.message}`);
+    }
+  }
+
+  await recalculateDrainStatsForVehicleRange({
+    vehicleId: input.vehicleId,
+    from: input.from,
+    to: input.to,
+  });
+
+  return { upserted: rows.length, warnings };
+}
+
+export async function recalculateDrainStatsForVehicleRange(input: {
+  vehicleId: string;
+  from: string;
+  to: string;
+}): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { data: trips, error: tripsError } = await supabase
+    .from("daily_trips")
+    .select("id, report_date")
+    .eq("vehicle_id", input.vehicleId)
+    .gte("report_date", input.from)
+    .lte("report_date", input.to);
+
+  if (tripsError) {
+    throw new Error(`Failed to load daily trips for drain stats: ${tripsError.message}`);
+  }
+
+  for (const trip of trips ?? []) {
+    const dailyTripId = trip.id as string;
+    const { data: drains, error: drainsError } = await supabase
+      .from("fuel_events")
+      .select("volume_l")
+      .eq("daily_trip_id", dailyTripId)
+      .eq("event_type", "drain");
+
+    if (drainsError) {
+      throw new Error(`Failed to load drain events: ${drainsError.message}`);
+    }
+
+    const drainCount = drains?.length ?? 0;
+    const drainedL = (drains ?? []).reduce(
+      (sum, row) => sum + Number(row.volume_l ?? 0),
+      0,
+    );
+
+    const { error: updateError } = await supabase
+      .from("daily_trips")
+      .update({
+        drain_count: drainCount,
+        drained_l: drainedL,
+      })
+      .eq("id", dailyTripId);
+
+    if (updateError) {
+      throw new Error(`Failed to update drain stats: ${updateError.message}`);
+    }
+  }
 }

@@ -5,20 +5,33 @@ type TableCalls = {
   upsert: Array<{ rows: unknown; options?: unknown }>;
   insert: Array<unknown>;
   delete: number;
+  update: unknown[];
+  select: unknown[];
 };
 
 const calls: Record<string, TableCalls> = {};
 
 function tableCalls(table: string): TableCalls {
-  calls[table] ??= { upsert: [], insert: [], delete: 0 };
+  calls[table] ??= { upsert: [], insert: [], delete: 0, update: [], select: [] };
   return calls[table]!;
 }
 
 function makeBuilder(table: string) {
   const result =
     table === "daily_trips"
-      ? { data: { id: "trip-1" }, error: null }
-      : { data: [], error: null };
+      ? {
+          data:
+            table === "daily_trips"
+              ? [
+                  { id: "trip-25", report_date: "2026-06-25" },
+                  { id: "trip-26", report_date: "2026-06-26" },
+                ]
+              : { id: "trip-25" },
+          error: null,
+        }
+      : table === "fuel_events"
+        ? { data: [{ volume_l: 11.47 }, { volume_l: 12.5 }], error: null }
+        : { data: [], error: null };
 
   const builder: Record<string, unknown> = {
     upsert(rows: unknown, options?: unknown) {
@@ -33,11 +46,18 @@ function makeBuilder(table: string) {
       tableCalls(table).delete += 1;
       return builder;
     },
+    update(payload: unknown) {
+      tableCalls(table).update.push(payload);
+      return builder;
+    },
     select: () => builder,
     eq: () => builder,
     in: () => builder,
+    gte: () => builder,
+    lte: () => builder,
     order: () => builder,
-    single: () => Promise.resolve(result),
+    single: () => Promise.resolve({ data: { id: "trip-1" }, error: null }),
+    maybeSingle: () => Promise.resolve({ data: { id: "trip-25" }, error: null }),
     then: (resolve: (value: unknown) => unknown) => resolve(result),
   };
   return builder;
@@ -49,7 +69,10 @@ vi.mock("@/db/supabase-admin", () => ({
   getSupabaseAdmin: () => ({ from: fromMock }),
 }));
 
-import { upsertDailyTripWithSegments } from "@/db/trips-repository";
+import {
+  upsertDailyTripWithSegments,
+  upsertFuelDrainsForVehicleRange,
+} from "@/db/trips-repository";
 
 const baseDailyTrip = {
   vehicle_id: "veh-1",
@@ -88,6 +111,7 @@ const baseDailyTrip = {
   anomaly_status: "not_evaluated",
   is_anomaly: false,
   movement_duration_seconds: null,
+  over_speed_limit_duration_seconds: null,
   stop_count: 0,
   parking_duration_seconds: null,
   parking_count_from_trips: 0,
@@ -151,5 +175,48 @@ describe("upsertDailyTripWithSegments fuel events", () => {
     const rows = fuelEvents.upsert[0]!.rows as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2);
     expect(rows.every((row) => row.daily_trip_id === "trip-1")).toBe(true);
+  });
+});
+
+describe("upsertFuelDrainsForVehicleRange", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const key of Object.keys(calls)) {
+      delete calls[key];
+    }
+  });
+
+  it("upserts range drains and recalculates daily drain stats", async () => {
+    const result = await upsertFuelDrainsForVehicleRange({
+      vehicleId: "veh-1",
+      from: "2026-06-25",
+      to: "2026-06-26",
+      timezone: "Europe/Kyiv",
+      events: [
+        fuelEvent({
+          event_type: "drain",
+          event_time: "2026-06-25T01:51:46.000Z",
+          volume_l: 11.47,
+          address: "8400 Oostende, Belgium",
+        }),
+        fuelEvent({
+          event_type: "drain",
+          event_time: "2026-06-25T22:46:09.000Z",
+          volume_l: 12.5,
+          address: "38176 Wendeburg, Germany",
+        }),
+      ],
+    });
+
+    expect(result.upserted).toBe(2);
+    const fuelEvents = tableCalls("fuel_events");
+    expect(fuelEvents.delete).toBeGreaterThan(0);
+    expect(fuelEvents.upsert).toHaveLength(1);
+    const rows = fuelEvents.upsert[0]!.rows as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.daily_trip_id === "trip-25")).toBe(true);
+
+    const dailyTrips = tableCalls("daily_trips");
+    expect(dailyTrips.update.length).toBeGreaterThan(0);
   });
 });

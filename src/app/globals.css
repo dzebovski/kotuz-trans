@@ -806,6 +806,21 @@ code,
   color: color-mix(in srgb, #4a5a10 72%, var(--text));
 }
 
+.fuel-consumption-text--success {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.fuel-consumption-text--danger {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.fuel-consumption-text--avrg {
+  color: color-mix(in srgb, #4a5a10 72%, var(--text));
+  font-weight: 600;
+}
+
 .details-row td {
   background: var(--bg-subtle);
   padding: 0;

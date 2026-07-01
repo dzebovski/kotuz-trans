@@ -1,10 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, ChevronRight, Clock3, Fuel, Truck } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronRight,
+  Clock3,
+  Droplets,
+  Fuel,
+  Gauge,
+  Truck,
+} from "lucide-react";
 import { Badge } from "@/components/Badge";
 import {
   formatFuelStatusBadgeLabel,
+  formatHighDaysBadgeLabel,
   fuelStatusBadgeTone,
 } from "@/analytics/fuel-consumption-status";
 import { formatDuration, formatNum } from "@/lib/report/format";
@@ -67,17 +76,29 @@ export function RangeVehicleRow({ vehicle, from, to }: RangeVehicleRowProps) {
         {vehicle.highDays > 0 ? (
           <Badge tone="danger">
             <AlertTriangle size={13} />
-            {vehicle.highDays} днів high
+            {formatHighDaysBadgeLabel(vehicle.highDays)}
           </Badge>
         ) : null}
         <Badge>
           <Fuel size={13} />
           Заправок: {vehicle.refillCount} · {formatNum(vehicle.refilledL, "л")}
         </Badge>
+        {vehicle.drainCount > 0 ? (
+          <Badge tone="danger">
+            <Droplets size={13} />
+            Зливів: {vehicle.drainCount} · {formatNum(vehicle.drainedL, "л")}
+          </Badge>
+        ) : null}
         <Badge>
           <Clock3 size={13} />
           стоянки {vehicle.parkingCount} · {formatDuration(vehicle.parkingDurationSeconds)}
         </Badge>
+        {vehicle.overSpeedLimitDurationSeconds > 0 ? (
+          <Badge tone="warning">
+            <Gauge size={13} />
+            &gt; 86 км/г · {formatDuration(vehicle.overSpeedLimitDurationSeconds)}
+          </Badge>
+        ) : null}
       </div>
     </article>
   );

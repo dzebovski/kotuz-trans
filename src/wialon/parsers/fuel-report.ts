@@ -79,6 +79,18 @@ export function shouldLoadFuelChronology(stats: ParsedFuelDailyStats): boolean {
   return stats.refillCount > 0 || stats.drainCount > 0;
 }
 
+export const DRAIN_TABLE_NAMES = ["unit_drains", "unit_thefts"] as const;
+
+function findDrainTableIndex(
+  tables: Array<{ name?: string; rows?: number }>,
+): number {
+  return tables.findIndex((table) =>
+    DRAIN_TABLE_NAMES.includes(
+      (table.name ?? "") as (typeof DRAIN_TABLE_NAMES)[number],
+    ),
+  );
+}
+
 export function resolveFuelEventTableIndices(input: {
   stats: WialonStatRow[];
   tables: Array<{ name?: string; rows?: number }>;
@@ -99,13 +111,32 @@ export function resolveFuelEventTableIndices(input: {
     );
     if (fillingsIndex >= 0) {
       indices.push(fillingsIndex);
+      const fillingRows = input.tables[fillingsIndex]?.rows ?? 0;
+      if (
+        fillingRows < daily.refillCount &&
+        chronologyIndex >= 0 &&
+        !indices.includes(chronologyIndex)
+      ) {
+        indices.push(chronologyIndex);
+      }
     } else if (chronologyIndex >= 0) {
       indices.push(chronologyIndex);
     }
   }
 
   if (daily.drainCount > 0) {
-    if (chronologyIndex >= 0 && !indices.includes(chronologyIndex)) {
+    const drainsIndex = findDrainTableIndex(input.tables);
+    if (drainsIndex >= 0) {
+      indices.push(drainsIndex);
+      const drainRows = input.tables[drainsIndex]?.rows ?? 0;
+      if (
+        drainRows < daily.drainCount &&
+        chronologyIndex >= 0 &&
+        !indices.includes(chronologyIndex)
+      ) {
+        indices.push(chronologyIndex);
+      }
+    } else if (chronologyIndex >= 0 && !indices.includes(chronologyIndex)) {
       indices.push(chronologyIndex);
     }
   }

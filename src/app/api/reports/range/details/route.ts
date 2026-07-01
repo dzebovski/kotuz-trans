@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inferPausesBetweenSegments } from "@/analytics/inferred-pauses";
 import { getServerEnv } from "@/config/env";
 import {
+  listFuelDrainsForVehicleRange,
   listFuelRefillsForVehicleRange,
   listTripSegmentsForDailyTrip,
   listTripSegmentsForVehicleRange,
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: range.error }, { status: 400 });
     }
 
-    const [segments, refills] = await Promise.all([
+    const [segments, refills, drains] = await Promise.all([
       listTripSegmentsForVehicleRange({
         vehicleId,
         from: range.from,
@@ -58,9 +59,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         from: range.from,
         to: range.to,
       }),
+      listFuelDrainsForVehicleRange({
+        vehicleId,
+        from: range.from,
+        to: range.to,
+      }),
     ]);
 
-    return NextResponse.json({ segments, refills });
+    return NextResponse.json({ segments, refills, drains });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

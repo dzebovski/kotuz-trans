@@ -11,6 +11,14 @@ function isGeoCell(cell: WialonStatCell): cell is WialonGeoCell {
   return typeof cell === "object" && cell != null;
 }
 
+function extractGeoCellAddress(raw: string, isTime: boolean): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || isTime || trimmed.includes("°")) {
+    return null;
+  }
+  return trimmed;
+}
+
 export function cellToString(cell: WialonStatCell): string {
   if (cell == null) {
     return "";
@@ -60,7 +68,7 @@ export function parseGeoCell(cell: WialonStatCell): ParsedGeoCell {
     time: isTime ? raw : null,
     latitude,
     longitude,
-    address: !isTime && raw.includes(",") ? raw : null,
+    address: extractGeoCellAddress(raw, isTime),
     raw,
   };
 }
